@@ -48,3 +48,5 @@ try {
   logger.error({ err }, 'failed to start');
   process.exit(1);
 }
+
+// new add
