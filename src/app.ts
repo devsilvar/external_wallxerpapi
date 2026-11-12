@@ -1,5 +1,5 @@
-import express, { type Express, type RequestHandler } from 'express';
-import helmetPkg from 'helmet';
+import express, { type Express } from 'express';
+import helmet from 'helmet';
 import type { Config } from './config.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
@@ -7,10 +7,12 @@ import { requestId } from './middleware/requestId.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
 import { healthRouter } from './routes/health.routes.js';
 
-// helmet 8 types its CJS entry as a namespace object carrying `default`, so a
-// builder that resolves it with require() semantics sees a non-callable value.
-// Both runtime entries export the middleware factory directly.
-const helmet = helmetPkg as unknown as () => RequestHandler;
+// Plain default import. helmet's CJS types (index.d.cts) are CJS-only and carry
+// no `export =`, so a builder resolving that entry via require() semantics gets
+// a non-callable namespace. NodeNext resolves the `import` condition to
+// index.d.mts instead, where the default export is callable. Do not switch this
+// to `import helmet = require('helmet')` or a bare namespace import.
+
 
 export function createApp(config: Config): Express {
   const app = express();
