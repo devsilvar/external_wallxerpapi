@@ -1,11 +1,16 @@
-import express, { type Express } from 'express';
-import helmet from 'helmet';
+import express, { type Express, type RequestHandler } from 'express';
+import helmetPkg from 'helmet';
 import type { Config } from './config.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
 import { requestId } from './middleware/requestId.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
 import { healthRouter } from './routes/health.routes.js';
+
+// helmet 8 types its CJS entry as a namespace object carrying `default`, so a
+// builder that resolves it with require() semantics sees a non-callable value.
+// Both runtime entries export the middleware factory directly.
+const helmet = helmetPkg as unknown as () => RequestHandler;
 
 export function createApp(config: Config): Express {
   const app = express();
