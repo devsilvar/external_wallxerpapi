@@ -1,5 +1,5 @@
 import express, { type Express } from 'express';
-import helmet from 'helmet';
+import { default as helmet } from 'helmet';
 import type { Config } from './config.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
@@ -7,11 +7,13 @@ import { requestId } from './middleware/requestId.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
 import { healthRouter } from './routes/health.routes.js';
 
-// Plain default import. helmet's CJS types (index.d.cts) are CJS-only and carry
-// no `export =`, so a builder resolving that entry via require() semantics gets
-// a non-callable namespace. NodeNext resolves the `import` condition to
-// index.d.mts instead, where the default export is callable. Do not switch this
-// to `import helmet = require('helmet')` or a bare namespace import.
+// Named binding, not `import helmet from 'helmet'`. Both of helmet's type
+// entries (index.d.cts and index.d.mts) export `default` as a named export and
+// neither uses `export =`, so a default import only typechecks when the caller
+// has exactly the right esModuleInterop/allowSyntheticDefaultImports and
+// module-resolution pair. Vercel's builder resolves the CJS entry and gets a
+// non-callable namespace -> TS2349. `import { default as helmet }` is callable
+// under every one of those combinations.
 
 
 export function createApp(config: Config): Express {
