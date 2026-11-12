@@ -1,5 +1,5 @@
-import express, { type Express } from 'express';
-import { default as helmet } from 'helmet';
+import express, { type Express, type RequestHandler } from 'express';
+import * as helmetNs from 'helmet';
 import type { Config } from './config.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
@@ -7,13 +7,19 @@ import { requestId } from './middleware/requestId.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
 import { healthRouter } from './routes/health.routes.js';
 
-// Named binding, not `import helmet from 'helmet'`. Both of helmet's type
-// entries (index.d.cts and index.d.mts) export `default` as a named export and
-// neither uses `export =`, so a default import only typechecks when the caller
-// has exactly the right esModuleInterop/allowSyntheticDefaultImports and
-// module-resolution pair. Vercel's builder resolves the CJS entry and gets a
-// non-callable namespace -> TS2349. `import { default as helmet }` is callable
-// under every one of those combinations.
+// Must be a namespace import + runtime `.default` lookup, not a default import.
+//
+// helmet 8 ships `exports: { import, require }` with NO `types` condition, so
+// which declaration file TypeScript sees depends on how the package is
+// installed. With `exports` honoured it resolves index.d.mts and a default
+// import works; when `exports` is absent or bypassed (a registry mirror, an
+// older npm, Vercel's builder) it falls back to `types: "./index.d.cts"`, and a
+// `.d.cts` file using ESM `export { helmet as default }` provides no callable
+// default under NodeNext — TS2349 on `helmet()`. Both entries DO export the
+// middleware as the `default` binding, so reading `.default` off the namespace
+// is callable in every one of those cases. Verified against both layouts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const helmet: () => RequestHandler = (helmetNs as any).default ?? (helmetNs as any);
 
 
 export function createApp(config: Config): Express {
