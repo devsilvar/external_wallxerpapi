@@ -2,10 +2,10 @@
   "name": "wowo-external-api",
   "version": "0.1.0",
   "private": true,
-  "description": "External API for Wowo — sales, invoices and expenses. No tax is computed on this surface.",
+  "description": "External API for — sales, invoices and expenses. No tax is computed on this surface.",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0 <23.0.0",
+    "node": ">=24.0.0 <26.0.0",
     "npm": ">=10.0.0"
   },
   "scripts": {
