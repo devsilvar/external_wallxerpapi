@@ -1,26 +1,31 @@
-import express, { type Express, type RequestHandler } from 'express';
+import express, { Router, type Express, type RequestHandler } from 'express';
 import * as helmetNs from 'helmet';
 import type { Config } from './config.js';
+import { authenticateDevice } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
+import { createRateLimiter, tokenKeyGenerator } from './middleware/rateLimit.js';
 import { requestId } from './middleware/requestId.js';
+import { requireAccountActive } from './middleware/requireAccountActive.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
+import { requirePlatformActive } from './middleware/requirePlatformActive.js';
+import { requireSubscription } from './middleware/requireSubscription.js';
+import { resolveAccount } from './middleware/resolveAccount.js';
+import { accountsRouter } from './routes/accounts.routes.js';
+import { adminRouter } from './routes/admin.routes.js';
+import { createAuthRouter } from './routes/auth.routes.js';
+import { customersRouter } from './routes/customers.routes.js';
+import { deletionsRouter } from './routes/deletions.routes.js';
+import { expensesRouter } from './routes/expenses.routes.js';
 import { healthRouter } from './routes/health.routes.js';
+import { docsRouter } from './routes/docs.routes.js';
+import { invoicesRouter } from './routes/invoices.routes.js';
+import { createPublicRouter } from './routes/public.routes.js';
+import { salesRouter } from './routes/sales.routes.js';
 
 // Must be a namespace import + runtime `.default` lookup, not a default import.
-//
-// helmet 8 ships `exports: { import, require }` with NO `types` condition, so
-// which declaration file TypeScript sees depends on how the package is
-// installed. With `exports` honoured it resolves index.d.mts and a default
-// import works; when `exports` is absent or bypassed (a registry mirror, an
-// older npm, Vercel's builder) it falls back to `types: "./index.d.cts"`, and a
-// `.d.cts` file using ESM `export { helmet as default }` provides no callable
-// default under NodeNext — TS2349 on `helmet()`. Both entries DO export the
-// middleware as the `default` binding, so reading `.default` off the namespace
-// is callable in every one of those cases. Verified against both layouts.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const helmet: () => RequestHandler = (helmetNs as any).default ?? (helmetNs as any);
-
 
 export function createApp(config: Config): Express {
   const app = express();
@@ -41,10 +46,59 @@ export function createApp(config: Config): Express {
   // import, so a large body is a mistake or an attack, not a use case.
   app.use(express.json({ limit: '1mb' }));
 
-  // Ahead of the kill switch: a disabled API must still answer its health probe.
+  // Ahead of the kill switch: a disabled API must still answer its health probe and docs.
   app.use(healthRouter);
+  app.use(docsRouter);
 
+  // Kill-switch layer 1 (503 API_DISABLED)
   app.use('/api', requireApiEnabled(config));
+
+  // V1 API Router: base path /api/external/v1
+  const v1Router = Router();
+
+  // Public unauthenticated routes (e.g. /public/invoices/:shareToken/pdf)
+  const publicRouter = createPublicRouter(config);
+  v1Router.use('/public', publicRouter);
+  app.use('/public', publicRouter);
+
+  // Auth routes (/auth/activate, /auth/rotate, /auth/revoke, /me)
+  // NOTE (P2-08 / §6.5): /me is mounted before the entitlement/suspension gates.
+  v1Router.use(createAuthRouter(config));
+
+  // Admin surface routes (/admin/*)
+  v1Router.use('/admin', adminRouter);
+
+  // Data routes pipeline: scoped under /accounts/:accountId
+  const accountRouter = Router({ mergeParams: true });
+  accountRouter.use(
+    authenticateDevice,
+    createRateLimiter({
+      limit: config.EXTERNAL_DATA_RATE_LIMIT,
+      instanceCount: config.INSTANCE_COUNT,
+      windowMs: 60_000,
+      keyGenerator: tokenKeyGenerator,
+    }),
+    resolveAccount,
+    requirePlatformActive,
+    requireAccountActive,
+    requireSubscription
+  );
+
+  // Probe endpoint to verify the middleware chain for tests
+  accountRouter.get('/ping', (_req, res) => {
+    res.status(200).json({ data: { ok: true } });
+  });
+
+  // Mount scoped resource routers
+  accountRouter.use('/customers', customersRouter);
+  accountRouter.use('/sales', salesRouter);
+  accountRouter.use('/expenses', expensesRouter);
+  accountRouter.use('/invoices', invoicesRouter);
+  accountRouter.use('/deletions', deletionsRouter);
+  accountRouter.use('/', accountsRouter);
+
+  v1Router.use('/accounts/:accountId', accountRouter);
+  app.use('/api/external/v1', v1Router);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
+import { z } from 'zod';
 import { AppError, errorEnvelope } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 
@@ -31,6 +32,22 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     }
 
     res.status(err.status).json(errorEnvelope(err.code, err.message, req.id, err.details));
+    return;
+  }
+
+  if (err instanceof z.ZodError) {
+    const hasUnrecognized = err.issues.some((i) => i.code === 'unrecognized_keys');
+    const code = hasUnrecognized ? 'UNKNOWN_FIELD' : 'VALIDATION_FAILED';
+    const message = hasUnrecognized
+      ? 'Request body contains unknown fields'
+      : 'Validation failed';
+    const fields: Record<string, string> = {};
+    for (const issue of err.issues) {
+      fields[issue.path.join('.') || 'body'] = issue.message;
+    }
+
+    logger.warn({ requestId: req.id, code, issues: err.issues }, message);
+    res.status(400).json(errorEnvelope(code, message, req.id, { fields }));
     return;
   }
 

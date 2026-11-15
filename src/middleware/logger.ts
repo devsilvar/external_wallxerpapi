@@ -21,11 +21,16 @@ export const requestLogger: RequestHandler = (req, res, next) => {
   res.on('finish', () => {
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
 
+    const sanitizedPath = req.path.replace(
+      /\/public\/invoices\/[^/]+\/pdf/,
+      '/public/invoices/[REDACTED]/pdf'
+    );
+
     logger.info(
       {
         requestId: req.id,
         method: req.method,
-        path: req.path,
+        path: sanitizedPath,
         status: res.statusCode,
         durationMs: Math.round(durationMs * 100) / 100,
       },

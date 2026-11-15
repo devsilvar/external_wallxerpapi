@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { startRetentionScheduler } from './jobs/retention.job.js';
 import { logger } from './lib/logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -10,12 +11,15 @@ function start(): void {
   const config = loadConfig();
   const app = createApp(config);
 
+  const retentionHandle = startRetentionScheduler(config);
+
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, env: config.NODE_ENV }, 'external-api listening');
   });
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, 'shutting down');
+    retentionHandle.stop();
 
     server.close((err) => {
       if (err) {

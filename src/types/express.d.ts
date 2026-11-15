@@ -1,11 +1,30 @@
 /**
- * Every request carries a server-minted id (plan §7.1). It is set once by the
- * `requestId` middleware and read by the logger and the error envelope.
+ * Type augmentations for Express Request.
  */
 declare global {
   namespace Express {
     interface Request {
+      /** Server-minted request ID (UUID) */
       id: string;
+
+      /** Authenticated external device */
+      device?: {
+        id: string;
+        businessId: string;
+        platformId: string;
+      };
+
+      /** Resolved and verified account scope */
+      account?: {
+        id: string;
+      };
+
+      /** Authenticated admin operator */
+      admin?: {
+        id: string;
+        name: string;
+        role: string;
+      };
     }
   }
 }

@@ -10,4 +10,27 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/db/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@prisma/client',
+              message: 'Direct @prisma/client access is forbidden outside src/db/**. Use src/db/scoped.js instead.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['**/db/client*', '../db/client*', './client*'],
+              message: 'Direct DB client access is forbidden outside src/db/**. Use src/db/scoped.js instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

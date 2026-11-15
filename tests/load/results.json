@@ -1,0 +1,42 @@
+{
+  "testBatchId": "load-1794698612658",
+  "accountsSeeded": 1000,
+  "totalRequests": 60,
+  "totalErrors": 0,
+  "errorRatePercent": 0,
+  "targets": {
+    "singleWriteReadP95TargetMs": 300,
+    "list50P95TargetMs": 800,
+    "maxErrorRatePercent": 0.1
+  },
+  "measurements": {
+    "singleWrite": {
+      "count": 25,
+      "minMs": 3425.6,
+      "maxMs": 7900.5,
+      "avgMs": 4978.9,
+      "p50Ms": 4659.3,
+      "p95Ms": 7700.9,
+      "p99Ms": 7900.5
+    },
+    "singleRead": {
+      "count": 25,
+      "minMs": 1603.2,
+      "maxMs": 3050.5,
+      "avgMs": 2343.7,
+      "p50Ms": 2202.1,
+      "p95Ms": 2962.8,
+      "p99Ms": 3050.5
+    },
+    "list50Rows": {
+      "count": 10,
+      "minMs": 1442.1,
+      "maxMs": 5893.4,
+      "avgMs": 3296.8,
+      "p50Ms": 3298,
+      "p95Ms": 5893.4,
+      "p99Ms": 5893.4
+    }
+  },
+  "timestamp": "2026-11-14T23:25:14.100Z"
+}
