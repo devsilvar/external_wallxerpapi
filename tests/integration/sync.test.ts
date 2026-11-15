@@ -4,7 +4,7 @@ import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
 import { createCustomer, createSale } from '../../src/db/scoped.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)', () => {
   const testId = `sync-${Date.now()}`;
@@ -17,7 +17,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -28,10 +28,13 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Sync Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -47,16 +50,6 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
@@ -64,7 +57,6 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     await prisma.saleLineItem.deleteMany({ where: { sale: { businessId } } });
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
     await prisma.customer.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -109,7 +101,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
 
       const res = await request(app)
         .get(url)
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${apiKey}`);
 
       expect(res.status).toBe(200);
       const items = res.body.data;
@@ -133,7 +125,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     // 1. Create customer
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/customers`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalId: extId,
         name: 'Temporary Customer',
@@ -145,7 +137,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     // 2. Soft delete customer
     const delRes = await request(app)
       .delete(`/api/external/v1/accounts/${businessId}/customers/${customerId}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(delRes.status).toBe(200);
 
@@ -156,7 +148,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     // Assert tombstone in deletions endpoint
     const tombRes = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/deletions`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(tombRes.status).toBe(200);
     const tombstoneFound = tombRes.body.data.some(
@@ -168,7 +160,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     // 3. Re-create customer with the SAME externalId -> 200 OK with reactivated row
     const recreateRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/customers`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalId: extId,
         name: 'Reactivated Customer Name',
@@ -195,7 +187,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
     // Edit customer
     await request(app)
       .patch(`/api/external/v1/accounts/${businessId}/customers/${cust.id}`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         name: 'After Edit',
       });
@@ -207,7 +199,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
           beforeTime.toISOString()
         )}`
       )
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(syncRes.status).toBe(200);
     const found = syncRes.body.data.find((c: { id: string }) => c.id === cust.id);
@@ -241,7 +233,7 @@ describe('Sync, keyset paging, and tombstones (tests/integration/sync.test.ts)',
 
       const res = await request(app)
         .get(url)
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${apiKey}`);
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.data)).toBe(true);

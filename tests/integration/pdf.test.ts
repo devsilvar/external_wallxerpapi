@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 import { generateCommercialInvoicePdf } from '../../src/pdf/commercial-invoice.pdf.js';
 import { COMMERCIAL_INVOICE_DISCLAIMER } from '../../src/pdf/pdf-common.js';
 
@@ -35,7 +35,7 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -46,10 +46,13 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'PDF Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -70,22 +73,11 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
     await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
     await prisma.invoice.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -197,7 +189,7 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pdf-route-${testId}`,
         customerName: 'Route Customer',
@@ -212,7 +204,7 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
     // 2. Fetch PDF
     const res = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('application/pdf');
@@ -228,7 +220,7 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
     // 1. Create and cancel invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pdf-cancelled-${testId}`,
         customerName: 'Cancel Customer',
@@ -240,12 +232,12 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
 
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/cancel`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     // 2. Attempt to fetch PDF
     const res = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(410);
     expect(res.body.error.code).toBe('INVOICE_CANCELLED');
@@ -254,7 +246,7 @@ describe('Commercial invoice PDF generation and route (tests/integration/pdf.tes
   it('GET /accounts/:accountId/invoices/:id/pdf returns 404 NOT_FOUND for non-existent invoice', async () => {
     const res = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/invoices/00000000-0000-0000-0000-000000000000/pdf`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');

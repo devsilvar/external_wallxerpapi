@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Account profile self-service (tests/integration/account-profile.test.ts)', () => {
   const testId = `profile-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Profile Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -48,20 +51,9 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -70,7 +62,7 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
   it('allows merchant to read their profile via GET /accounts/:accountId', async () => {
     const res = await request(app)
       .get(`/api/external/v1/accounts/${businessId}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe(businessId);
@@ -82,7 +74,7 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
   it('allows merchant to update allowed fields via PATCH /accounts/:accountId', async () => {
     const res = await request(app)
       .patch(`/api/external/v1/accounts/${businessId}`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         businessName: 'Ada Obi Supermarket',
         ownerName: 'Ada Obi',
@@ -114,7 +106,7 @@ describe('Account profile self-service (tests/integration/account-profile.test.t
     for (const payload of forbiddenPayloads) {
       const res = await request(app)
         .patch(`/api/external/v1/accounts/${businessId}`)
-        .set('Authorization', `Bearer ${deviceToken}`)
+        .set('Authorization', `Bearer ${apiKey}`)
         .send(payload);
 
       expect(res.status).toBe(400);

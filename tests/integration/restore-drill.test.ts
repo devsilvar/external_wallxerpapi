@@ -12,7 +12,6 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
   let saleId: string;
   let invoiceId: string;
   let expenseId: string;
-  let deviceId: string;
   let tombstoneId: string;
   let auditLogId: string;
 
@@ -34,6 +33,8 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
       data: {
         name: `Platform ${drillId}`,
         ownerUserId: userId,
+        apiKeyHash: tokenHash,
+        apiKeyPrefix: rawToken.slice(0, 16),
         isActive: true,
       },
     });
@@ -51,16 +52,6 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
       },
     });
     businessId = biz.id;
-
-    const device = await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash,
-        activatedAt: new Date('2026-11-15T10:00:00Z'),
-      },
-    });
-    deviceId = device.id;
 
     const customer = await prisma.customer.create({
       data: {
@@ -176,7 +167,6 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
     await prisma.saleLineItem.deleteMany({ where: { saleId } });
     await prisma.salesTransaction.deleteMany({ where: { id: saleId } });
     await prisma.customer.deleteMany({ where: { id: customerId } });
-    await prisma.externalDevice.deleteMany({ where: { id: deviceId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -185,10 +175,10 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
 
   it('performs a complete backup snapshot extraction and verifies data completeness', async () => {
     // Step 1: Extract snapshot of the source records
-    const [bizSnapshot, devSnapshot, saleSnapshot, invSnapshot, expSnapshot, tombSnapshot, auditSnapshot] =
+    const [bizSnapshot, platSnapshot, saleSnapshot, invSnapshot, expSnapshot, tombSnapshot, auditSnapshot] =
       await Promise.all([
         prisma.business.findUnique({ where: { id: businessId } }),
-        prisma.externalDevice.findUnique({ where: { id: deviceId } }),
+        prisma.platform.findUnique({ where: { id: platformId } }),
         prisma.salesTransaction.findUnique({ where: { id: saleId }, include: { items: true } }),
         prisma.invoice.findUnique({ where: { id: invoiceId }, include: { lines: true } }),
         prisma.expense.findUnique({ where: { id: expenseId } }),
@@ -197,7 +187,7 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
       ]);
 
     expect(bizSnapshot).not.toBeNull();
-    expect(devSnapshot).not.toBeNull();
+    expect(platSnapshot).not.toBeNull();
     expect(saleSnapshot).not.toBeNull();
     expect(invSnapshot).not.toBeNull();
     expect(expSnapshot).not.toBeNull();
@@ -205,7 +195,7 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
     expect(auditSnapshot).not.toBeNull();
 
     // Step 2: Validate cryptographic hash and tax defaults in snapshot
-    expect(devSnapshot?.tokenHash).toBe(tokenHash);
+    expect(platSnapshot?.apiKeyHash).toBe(tokenHash);
     expect(saleSnapshot?.isTaxable).toBe(true);
     expect(Number(invSnapshot?.vatRate)).toBe(0);
     expect(Number(invSnapshot?.vatAmount)).toBe(0);
@@ -214,7 +204,7 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
     // Step 3: Simulate restoring records into a target database schema
     const simulatedRestorePayload = JSON.stringify({
       business: bizSnapshot,
-      device: devSnapshot,
+      platform: platSnapshot,
       sale: saleSnapshot,
       invoice: invSnapshot,
       expense: expSnapshot,
@@ -227,7 +217,7 @@ describe('Backup and a rehearsed restore (tests/integration/restore-drill.test.t
     // Assert 100% field match across all entities
     expect(parsedRestore.business.id).toBe(businessId);
     expect(parsedRestore.business.businessName).toBe('Drill Enterprise Ltd');
-    expect(parsedRestore.device.tokenHash).toBe(tokenHash);
+    expect(parsedRestore.platform.apiKeyHash).toBe(tokenHash);
     expect(parsedRestore.sale.referenceId).toBe(`REF-${drillId}`);
     expect(parsedRestore.sale.items).toHaveLength(1);
     expect(parsedRestore.invoice.externalRef).toBe(`INV-${drillId}`);

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Reference namespace reservation (tests/integration/reference-namespace.test.ts)', () => {
   const testId = `ref-ns-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Reference namespace reservation (tests/integration/reference-namespace
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Reference namespace reservation (tests/integration/reference-namespace
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Namespace Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -46,21 +49,10 @@ describe('Reference namespace reservation (tests/integration/reference-namespace
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -77,7 +69,7 @@ describe('Reference namespace reservation (tests/integration/reference-namespace
     for (const ref of prohibitedReferences) {
       const res = await request(app)
         .post(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`)
+        .set('Authorization', `Bearer ${apiKey}`)
         .send({
           referenceId: ref,
           amount: '1000.00',
@@ -101,7 +93,7 @@ describe('Reference namespace reservation (tests/integration/reference-namespace
     for (const ref of validReferences) {
       const res = await request(app)
         .post(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`)
+        .set('Authorization', `Bearer ${apiKey}`)
         .send({
           referenceId: ref,
           amount: '1000.00',

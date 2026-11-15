@@ -4,7 +4,7 @@ import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
 import { createInvoice, createSale } from '../../src/db/scoped.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Sales delete and linked invoice guard (tests/integration/sales-delete.test.ts)', () => {
   const testId = `sales-del-${Date.now()}`;
@@ -17,7 +17,7 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -28,10 +28,13 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Sales Delete Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -47,16 +50,6 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
@@ -65,7 +58,6 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
     await prisma.invoice.deleteMany({ where: { businessId } });
     await prisma.saleLineItem.deleteMany({ where: { sale: { businessId } } });
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -102,7 +94,7 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
     // 3. Attempt to DELETE the linked sale via API -> 409 SALE_LINKED_TO_INVOICE
     const res = await request(app)
       .delete(`/api/external/v1/accounts/${businessId}/sales/${sale.id}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('SALE_LINKED_TO_INVOICE');
@@ -128,7 +120,7 @@ describe('Sales delete and linked invoice guard (tests/integration/sales-delete.
     // 2. Delete sale via API
     const res = await request(app)
       .delete(`/api/external/v1/accounts/${businessId}/sales/${sale.id}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.deleted).toBe(true);

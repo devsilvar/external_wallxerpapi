@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Discount bound validation (tests/integration/discount-bound.test.ts)', () => {
   const testId = `disc-bound-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Discount Bound Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -46,23 +49,12 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
     await prisma.externalTombstone.deleteMany({ where: { businessId } });
     await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
     await prisma.invoice.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -71,7 +63,7 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
   it('rejects invoice creation with discount > subtotal with 400 INVALID_DISCOUNT (never clamps)', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-excess-disc-${testId}`,
         customerName: 'Test Customer',
@@ -94,7 +86,7 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
   it('accepts invoice creation with discount equal to subtotal (total = 0.00)', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-zero-total-${testId}`,
         customerName: 'Test Customer',
@@ -120,7 +112,7 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
     // 1. Create valid draft invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-update-disc-${testId}`,
         customerName: 'Test Customer',
@@ -142,7 +134,7 @@ describe('Discount bound validation (tests/integration/discount-bound.test.ts)',
     // 2. Update with discount > subtotal (6000 > 5000)
     const updateRes = await request(app)
       .put(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         discount: '6000.00',
       });

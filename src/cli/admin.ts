@@ -1,13 +1,5 @@
-import { loadConfig } from '../config.js';
 import { createAdmin } from '../db/admin.repo.js';
-import { issueActivationCodeRecord } from '../db/device.repo.js';
-import { generateActivationCode, generateToken, hashToken } from '../lib/token.js';
-
-export interface IssueCodeResult {
-  code: string;
-  accountId: string;
-  expiresAt: Date;
-}
+import { generateToken, hashToken } from '../lib/token.js';
 
 export interface SeedAdminResult {
   id: string;
@@ -15,36 +7,6 @@ export interface SeedAdminResult {
   token: string;
   expiresAt: Date | null;
   allowedIps: string[];
-}
-
-/**
- * Issues a single-use 10-character Crockford Base32 activation code for an account.
- * Revokes any half-activated device on that account and stores sha256(code).
- * Never logs the activation code.
- */
-export async function issueActivationCode(
-  accountId: string,
-  ttlHours?: number
-): Promise<IssueCodeResult> {
-  const config = loadConfig();
-  const effectiveTtlHours = ttlHours ?? config.EXTERNAL_CODE_TTL_HOURS;
-
-  const code = generateActivationCode();
-  const codeHash = hashToken(code);
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + effectiveTtlHours * 3600 * 1000);
-
-  await issueActivationCodeRecord({
-    businessId: accountId,
-    codeHash,
-    expiresAt,
-  });
-
-  return {
-    code,
-    accountId,
-    expiresAt,
-  };
 }
 
 /**
@@ -123,33 +85,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'issue-code') {
-    const accountIndex = args.indexOf('--account');
-    if (accountIndex === -1) {
-      console.error('Error: --account <business-id> is required');
-      process.exit(1);
-    }
-
-    const accountId = args[accountIndex + 1];
-    if (!accountId || accountId.startsWith('--')) {
-      console.error('Error: --account requires a valid business ID');
-      process.exit(1);
-    }
-
-    try {
-      const result = await issueActivationCode(accountId);
-      console.log(`Activation code for account ${result.accountId}:`);
-      console.log(result.code);
-      console.log(`Expires at: ${result.expiresAt.toISOString()}`);
-    } catch (err) {
-      console.error(`Failed to issue activation code: ${(err as Error).message}`);
-      process.exit(1);
-    }
-    return;
-  }
-
   console.error(`Usage:`);
-  console.error(`  tsx src/cli/admin.ts issue-code --account <business-id>`);
   console.error(`  tsx src/cli/admin.ts seed-admin --name <admin-name> [--expires <date>] [--ips <list>]`);
   process.exit(1);
 }

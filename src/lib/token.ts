@@ -12,6 +12,13 @@ export function generateToken(): string {
 }
 
 /**
+ * Generates a platform API key with a readable prefix (default 'sk_ext_live_').
+ */
+export function generateApiKey(prefix = 'sk_ext_live_'): string {
+  return `${prefix}${crypto.randomBytes(24).toString('base64url')}`;
+}
+
+/**
  * Computes the SHA-256 hex digest of a raw token or activation code.
  * Used for constant-time comparisons and indexed database lookups.
  */

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateActivationCode, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 import { COMMERCIAL_INVOICE_DISCLAIMER } from '../../src/pdf/pdf-common.js';
 
 function extractPdfText(buffer: Buffer): string {
@@ -34,15 +34,14 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let rawActivationCode: string;
-  let deviceToken: string;
+  let apiKey: string;
   let customerId: string;
   let invoiceId: string;
   let invoiceNumber: string;
   let linkedSaleId: string;
 
   beforeAll(async () => {
-    // 1. Provision Platform, User, Business
+    // 1. Provision Platform and User
     const user = await prisma.user.create({
       data: {
         email: `${testId}@example.com`,
@@ -51,82 +50,62 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Pilot E2E Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
-
-    const biz = await prisma.business.create({
-      data: {
-        platformId,
-        externalCustomerId: `pilot-${testId}`,
-        userId,
-        businessName: 'Pilot Electronics & Consulting Ltd',
-        ownerName: 'Aliko Tester',
-        merchantId: `WOWO${Math.floor(1000000 + Math.random() * 9000000)}`,
-      },
-    });
-    businessId = biz.id;
-
-    // Issue activation code
-    rawActivationCode = generateActivationCode();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        codeHash: hashToken(rawActivationCode),
-        codeExpiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
-      },
-    });
   });
 
   afterAll(async () => {
-    await prisma.externalTombstone.deleteMany({ where: { businessId } });
-    await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
-    await prisma.invoice.deleteMany({ where: { businessId } });
-    await prisma.saleLineItem.deleteMany({ where: { sale: { businessId } } });
-    await prisma.salesTransaction.deleteMany({ where: { businessId } });
-    await prisma.expense.deleteMany({ where: { businessId } });
-    await prisma.customer.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
-    await prisma.business.deleteMany({ where: { id: businessId } });
-    await prisma.platform.deleteMany({ where: { id: platformId } });
-    await prisma.user.deleteMany({ where: { id: userId } });
+    if (businessId) {
+      await prisma.externalTombstone.deleteMany({ where: { businessId } });
+      await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
+      await prisma.invoice.deleteMany({ where: { businessId } });
+      await prisma.saleLineItem.deleteMany({ where: { sale: { businessId } } });
+      await prisma.salesTransaction.deleteMany({ where: { businessId } });
+      await prisma.expense.deleteMany({ where: { businessId } });
+      await prisma.customer.deleteMany({ where: { businessId } });
+      await prisma.auditLog.deleteMany({ where: { businessId } });
+      await prisma.businessMember.deleteMany({ where: { businessId } });
+      await prisma.business.deleteMany({ where: { id: businessId } });
+    }
+    if (platformId) {
+      await prisma.platform.deleteMany({ where: { id: platformId } });
+    }
+    if (userId) {
+      await prisma.user.deleteMany({ where: { id: userId } });
+    }
   });
 
-  it('Step 1: Activate device using raw activation code -> yields single-use bearer token', async () => {
+  it('Step 1: Onboard merchant via POST /accounts -> yields merchant account', async () => {
     const res = await request(app)
-      .post('/api/external/v1/auth/activate')
+      .post('/api/external/v1/accounts')
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
-        code: rawActivationCode,
-        deviceName: 'POS-Terminal-01',
-        devicePlatform: 'android',
+        customerId: `pilot-${testId}`,
+        businessName: 'Pilot Electronics & Consulting Ltd',
+        ownerName: 'Aliko Tester',
+        contactEmail: `${testId}-biz@example.com`,
+        contactPhone: '+2348030001122',
       });
 
-    expect(res.status).toBe(200);
-    expect(res.body.data.token).toBeDefined();
-    expect(res.body.data.accountId).toBe(businessId);
-    deviceToken = res.body.data.token;
-
-    // Proves code is single-use: replay fails with 401 CODE_INVALID
-    const replay = await request(app)
-      .post('/api/external/v1/auth/activate')
-      .send({
-        code: rawActivationCode,
-        deviceName: 'POS-Terminal-01',
-        devicePlatform: 'android',
-      });
-    expect(replay.status).toBe(401);
-    expect(replay.body.error.code).toBe('CODE_INVALID');
+    expect(res.status).toBe(201);
+    expect(res.body.data.id).toBeDefined();
+    expect(res.body.data.externalCustomerId).toBe(`pilot-${testId}`);
+    expect(res.body.data.merchantId).toMatch(/^WOWO\d{7}$/);
+    businessId = res.body.data.id;
   });
 
   it('Step 2: Create customer via POST /accounts/:id/customers', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/customers`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalId: `cust-ext-${Date.now()}`,
         name: 'Prime Client Ltd',
@@ -144,7 +123,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 3: Create an independent sale via POST /accounts/:id/sales', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/sales`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         referenceId: `POS-SALE-${Date.now()}`,
         amount: '45000.00',
@@ -170,7 +149,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 4: Create an expense and verify isDeductible = false safe default', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `EXP-${Date.now()}`,
         category: 'utility',
@@ -193,7 +172,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 5: Create invoice -> verify vatRate=0, vatAmount=0, total = subtotal - discount', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `INV-PILOT-${Date.now()}`,
         customerId,
@@ -234,7 +213,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 6: Issue invoice -> draft transitions to sent, sentAt set', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('sent');
@@ -244,7 +223,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 7: Mark-paid creates linked sale atomically; replay is idempotent and yields exactly one sale', async () => {
     const res1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentMethod: 'bank_transfer',
         paymentDate: '2026-11-13',
@@ -272,7 +251,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
     // Replay mark-paid
     const res2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentMethod: 'bank_transfer',
         paymentDate: '2026-11-13',
@@ -293,7 +272,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 8: Render commercial PDF -> verified title, headers, no VAT line, disclaimer verbatim', async () => {
     const res = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('application/pdf');
@@ -315,7 +294,7 @@ describe('Pilot Definition of Done End-to-End Test (tests/integration/pilot-e2e.
   it('Step 9: Capability link works with no credential, sends security headers', async () => {
     const linkRes = await request(app)
       .get(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(linkRes.status).toBe(200);
     expect(linkRes.body.data.pdfUrl).toBeDefined();

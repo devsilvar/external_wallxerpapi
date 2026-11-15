@@ -1,7 +1,7 @@
 import express, { Router, type Express, type RequestHandler } from 'express';
 import * as helmetNs from 'helmet';
 import type { Config } from './config.js';
-import { authenticateDevice } from './middleware/auth.js';
+import { authenticatePartner } from './middleware/authenticatePartner.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
 import { createRateLimiter, tokenKeyGenerator } from './middleware/rateLimit.js';
@@ -9,17 +9,16 @@ import { requestId } from './middleware/requestId.js';
 import { requireAccountActive } from './middleware/requireAccountActive.js';
 import { requireApiEnabled } from './middleware/requireApiEnabled.js';
 import { requirePlatformActive } from './middleware/requirePlatformActive.js';
-import { requireSubscription } from './middleware/requireSubscription.js';
-import { resolveAccount } from './middleware/resolveAccount.js';
-import { accountsRouter } from './routes/accounts.routes.js';
+import { resolveAccountByPartner } from './middleware/resolveAccountByPartner.js';
+import { accountsRouter, onboardingHandler } from './routes/accounts.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
-import { createAuthRouter } from './routes/auth.routes.js';
 import { customersRouter } from './routes/customers.routes.js';
 import { deletionsRouter } from './routes/deletions.routes.js';
 import { expensesRouter } from './routes/expenses.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 import { docsRouter } from './routes/docs.routes.js';
 import { invoicesRouter } from './routes/invoices.routes.js';
+import { profitRouter } from './routes/profit.routes.js';
 import { createPublicRouter } from './routes/public.routes.js';
 import { salesRouter } from './routes/sales.routes.js';
 
@@ -32,21 +31,19 @@ export function createApp(config: Config): Express {
 
   app.disable('x-powered-by');
 
-  // Must precede any IP-reading middleware (the rate limiter arrives in Phase 2),
-  // or every caller is attributed to the proxy's address.
+  // Must precede any IP-reading middleware, or every caller is attributed to proxy
   app.set('trust proxy', config.TRUST_PROXY);
 
   app.use(helmet());
 
-  // Before the body parser: a malformed payload must still come back with an id.
+  // Before body parser: malformed payloads must still return with request ID
   app.use(requestId);
   app.use(requestLogger);
 
-  // 1 MB. This surface carries a handful of rows per request and never a bulk
-  // import, so a large body is a mistake or an attack, not a use case.
+  // 1 MB payload limit
   app.use(express.json({ limit: '1mb' }));
 
-  // Ahead of the kill switch: a disabled API must still answer its health probe and docs.
+  // Ahead of the kill switch: a disabled API must still answer health probe and docs
   app.use(healthRouter);
   app.use(docsRouter);
 
@@ -61,27 +58,36 @@ export function createApp(config: Config): Express {
   v1Router.use('/public', publicRouter);
   app.use('/public', publicRouter);
 
-  // Auth routes (/auth/activate, /auth/rotate, /auth/revoke, /me)
-  // NOTE (P2-08 / §6.5): /me is mounted before the entitlement/suspension gates.
-  v1Router.use(createAuthRouter(config));
-
   // Admin surface routes (/admin/*)
   v1Router.use('/admin', adminRouter);
 
-  // Data routes pipeline: scoped under /accounts/:accountId
-  const accountRouter = Router({ mergeParams: true });
-  accountRouter.use(
-    authenticateDevice,
+  // Partner customer onboarding endpoint: POST /api/external/v1/accounts
+  // Authenticated by partner Platform API Key
+  v1Router.post(
+    '/accounts',
+    authenticatePartner,
     createRateLimiter({
       limit: config.EXTERNAL_DATA_RATE_LIMIT,
       instanceCount: config.INSTANCE_COUNT,
       windowMs: 60_000,
       keyGenerator: tokenKeyGenerator,
     }),
-    resolveAccount,
+    onboardingHandler
+  );
+
+  // Data routes pipeline: scoped under /accounts/:accountId
+  const accountRouter = Router({ mergeParams: true });
+  accountRouter.use(
+    authenticatePartner,
+    createRateLimiter({
+      limit: config.EXTERNAL_DATA_RATE_LIMIT,
+      instanceCount: config.INSTANCE_COUNT,
+      windowMs: 60_000,
+      keyGenerator: tokenKeyGenerator,
+    }),
+    resolveAccountByPartner,
     requirePlatformActive,
-    requireAccountActive,
-    requireSubscription
+    requireAccountActive
   );
 
   // Probe endpoint to verify the middleware chain for tests
@@ -95,6 +101,7 @@ export function createApp(config: Config): Express {
   accountRouter.use('/expenses', expensesRouter);
   accountRouter.use('/invoices', invoicesRouter);
   accountRouter.use('/deletions', deletionsRouter);
+  accountRouter.use('/', profitRouter);
   accountRouter.use('/', accountsRouter);
 
   v1Router.use('/accounts/:accountId', accountRouter);

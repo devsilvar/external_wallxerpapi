@@ -18,8 +18,7 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
-  let deviceId: string;
+  let platformApiKey: string;
 
   // Admin tokens
   let normalAdminToken: string;
@@ -47,10 +46,12 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
     });
     userId = user.id;
 
+    platformApiKey = generateToken();
     const platform = await prisma.platform.create({
       data: {
         name: `Admin Test Platform ${testId}`,
         ownerUserId: userId,
+        apiKeyHash: hashToken(platformApiKey),
         isActive: true,
         flatFeeNgn: '50.00',
         subscriptionExpiresAt: new Date(Date.now() + 30 * 86_400_000),
@@ -70,18 +71,6 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    const dev = await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-        lastSeenAt: new Date(),
-      },
-    });
-    deviceId = dev.id;
 
     // Seed sample sales and invoice
     await prisma.salesTransaction.create({
@@ -180,7 +169,6 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
 
     await prisma.invoice.deleteMany({ where: { businessId } });
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -201,10 +189,10 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       expect(res.body.error.code).toBe('TOKEN_INVALID');
     });
 
-    it('CRITICAL GATE: strictly rejects valid device tokens on /admin/* with 401 TOKEN_INVALID', async () => {
+    it('CRITICAL GATE: strictly rejects valid partner tokens on /admin/* with 401 TOKEN_INVALID', async () => {
       const res = await request(app)
         .get('/api/external/v1/admin/usage')
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${platformApiKey}`);
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('TOKEN_INVALID');
     });
@@ -293,12 +281,12 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       expect(suspendRes.body.data.isActive).toBe(false);
       expect(suspendRes.body.data.suspendedReason).toBe('Administrative investigation');
 
-      // Verify partner device now receives 403 PLATFORM_INACTIVE
-      const deviceCheck = await request(app)
+      // Verify partner platform now receives 403 PLATFORM_SUSPENDED
+      const platformCheck = await request(app)
         .get(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`);
-      expect(deviceCheck.status).toBe(403);
-      expect(deviceCheck.body.error.code).toBe('PLATFORM_SUSPENDED');
+        .set('Authorization', `Bearer ${platformApiKey}`);
+      expect(platformCheck.status).toBe(403);
+      expect(platformCheck.body.error.code).toBe('PLATFORM_SUSPENDED');
 
       // Resume
       const resumeRes = await request(app)
@@ -309,11 +297,11 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       expect(resumeRes.status).toBe(200);
       expect(resumeRes.body.data.isActive).toBe(true);
 
-      // Verify device access restored
-      const deviceRestored = await request(app)
+      // Verify platform access restored
+      const platformRestored = await request(app)
         .get(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`);
-      expect(deviceRestored.status).toBe(200);
+        .set('Authorization', `Bearer ${platformApiKey}`);
+      expect(platformRestored.status).toBe(200);
     });
   });
 
@@ -329,7 +317,7 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       expect(res.body.page.limit).toBe(50);
     });
 
-    it('GET /admin/accounts/:id returns live entity counts and device list', async () => {
+    it('GET /admin/accounts/:id returns live entity counts', async () => {
       const res = await request(app)
         .get(`/api/external/v1/admin/accounts/${businessId}`)
         .set('Authorization', `Bearer ${normalAdminToken}`);
@@ -339,7 +327,6 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       expect(res.body.data.businessName).toBe('Admin Managed Store');
       expect(res.body.data.stats.salesCount).toBeGreaterThanOrEqual(1);
       expect(res.body.data.stats.invoicesCount).toBeGreaterThanOrEqual(1);
-      expect(res.body.data.devices.length).toBeGreaterThanOrEqual(1);
     });
 
     it('PATCH /admin/accounts/:id suspends and resumes merchant account', async () => {
@@ -355,7 +342,7 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       // Verify merchant traffic is rejected with 403 ACCOUNT_INACTIVE
       const devRes = await request(app)
         .get(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${platformApiKey}`);
       expect(devRes.status).toBe(403);
       expect(devRes.body.error.code).toBe('ACCOUNT_INACTIVE');
 
@@ -371,53 +358,8 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
       // Verify traffic flows again
       const devResumeRes = await request(app)
         .get(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${platformApiKey}`);
       expect(devResumeRes.status).toBe(200);
-    });
-  });
-
-  describe('P8-03: Device management and activation code re-issuance', () => {
-    it('GET /admin/accounts/:id/devices lists devices for an account', async () => {
-      const res = await request(app)
-        .get(`/api/external/v1/admin/accounts/${businessId}/devices`)
-        .set('Authorization', `Bearer ${normalAdminToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data.length).toBeGreaterThanOrEqual(1);
-      expect(res.body.data[0].hasToken).toBe(true);
-    });
-
-    it('POST /admin/accounts/:id/issue-code issues a new 10-char activation code', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${normalAdminToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data.accountId).toBe(businessId);
-      expect(res.body.data.code).toHaveLength(10);
-      expect(res.body.data.expiresAt).toBeDefined();
-
-      // Verify device was updated with the code hash in DB
-      const codeHash = hashToken(res.body.data.code);
-      const dev = await prisma.externalDevice.findFirst({
-        where: { businessId, codeHash },
-      });
-      expect(dev).not.toBeNull();
-    });
-
-    it('POST /admin/accounts/:id/devices/:deviceId/revoke revokes device', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/devices/${deviceId}/revoke`)
-        .set('Authorization', `Bearer ${normalAdminToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data.revoked).toBe(true);
-
-      // Verify device can no longer access API
-      const devRes = await request(app)
-        .get(`/api/external/v1/accounts/${businessId}/sales`)
-        .set('Authorization', `Bearer ${deviceToken}`);
-      expect(devRes.status).toBe(401);
     });
   });
 

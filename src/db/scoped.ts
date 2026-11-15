@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type {
   Business,
   Customer,
@@ -5,7 +6,6 @@ import type {
   ExpenseCategory,
   Invoice,
   InvoicePaymentMethod,
-  Prisma,
   SalesSource,
   SalesTransaction,
   TransactionStatus,
@@ -13,6 +13,7 @@ import type {
   AuditLog,
 } from '@prisma/client';
 import { prisma, Decimal } from './client.js';
+import { nextMerchantId } from './sequence.repo.js';
 import { AppError } from '../lib/errors.js';
 import { buildKeysetClause, type CursorPayload } from '../lib/cursor.js';
 
@@ -1163,4 +1164,207 @@ export async function createAuditLog(
       userAgent: data.userAgent ?? null,
     },
   });
+}
+
+/**
+ * Resolves a business under a platform by either externalCustomerId (primary)
+ * or by internal UUID (fallback).
+ */
+export async function findBusinessForPlatform(
+  platformId: string,
+  identifier: string
+): Promise<Business | null> {
+  // 1. Try externalCustomerId first
+  const byExternal = await prisma.business.findFirst({
+    where: { platformId, externalCustomerId: identifier },
+  });
+  if (byExternal) {
+    return byExternal;
+  }
+
+  // 2. Fallback to UUID if identifier matches UUID shape
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier)) {
+    return prisma.business.findFirst({
+      where: { id: identifier, platformId },
+    });
+  }
+
+  return null;
+}
+
+/**
+ * Aggregates sales and expenses to produce a net profit summary for an account.
+ */
+export async function calculateProfitSummary(
+  businessId: string,
+  from?: Date,
+  to?: Date
+): Promise<{
+  totalSales: Decimal;
+  salesCount: number;
+  totalExpenses: Decimal;
+  expensesCount: number;
+  netProfit: Decimal;
+}> {
+  const salesWhere: Prisma.SalesTransactionWhereInput = {
+    businessId,
+    status: { in: ['confirmed', 'completed'] },
+  };
+  if (from || to) {
+    salesWhere.transactionDate = {};
+    if (from) salesWhere.transactionDate.gte = from;
+    if (to) salesWhere.transactionDate.lte = to;
+  }
+
+  const expenseWhere: Prisma.ExpenseWhereInput = {
+    businessId,
+  };
+  if (from || to) {
+    expenseWhere.expenseDate = {};
+    if (from) expenseWhere.expenseDate.gte = from;
+    if (to) expenseWhere.expenseDate.lte = to;
+  }
+
+  const [salesAgg, expensesAgg] = await Promise.all([
+    prisma.salesTransaction.aggregate({
+      where: salesWhere,
+      _sum: { amount: true },
+      _count: { id: true },
+    }),
+    prisma.expense.aggregate({
+      where: expenseWhere,
+      _sum: { amount: true },
+      _count: { id: true },
+    }),
+  ]);
+
+  const totalSales = salesAgg._sum.amount ?? new Decimal(0);
+  const totalExpenses = expensesAgg._sum.amount ?? new Decimal(0);
+  const netProfit = totalSales.minus(totalExpenses);
+
+  return {
+    totalSales,
+    salesCount: salesAgg._count.id,
+    totalExpenses,
+    expensesCount: expensesAgg._count.id,
+    netProfit,
+  };
+}
+
+export interface OnboardAccountRecordInput {
+  platformId: string;
+  ownerUserId: string;
+  externalCustomerId: string;
+  businessName: string;
+  ownerName: string;
+  businessType?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+}
+
+export async function onboardAccountRecord(
+  data: OnboardAccountRecordInput
+): Promise<{ account: Business; isNew: boolean }> {
+  const existing = await prisma.business.findUnique({
+    where: {
+      platformId_externalCustomerId: {
+        platformId: data.platformId,
+        externalCustomerId: data.externalCustomerId,
+      },
+    },
+  });
+
+  if (existing) {
+    return { account: existing, isNew: false };
+  }
+
+  try {
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const insideExisting = await tx.business.findUnique({
+          where: {
+            platformId_externalCustomerId: {
+              platformId: data.platformId,
+              externalCustomerId: data.externalCustomerId,
+            },
+          },
+        });
+        if (insideExisting) {
+          return { account: insideExisting, isNew: false };
+        }
+
+        const merchantId = await nextMerchantId(tx);
+
+        const business = await tx.business.create({
+          data: {
+            platformId: data.platformId,
+            externalCustomerId: data.externalCustomerId,
+            userId: data.ownerUserId,
+            businessName: data.businessName,
+            ownerName: data.ownerName,
+            businessType: data.businessType || null,
+            merchantId,
+            contactPhone: data.contactPhone || null,
+            contactEmail: data.contactEmail || null,
+            address: data.address || null,
+            city: data.city || null,
+            state: data.state || null,
+            isActive: true,
+          },
+        });
+
+        await tx.businessMember.create({
+          data: {
+            businessId: business.id,
+            userId: data.ownerUserId,
+            role: 'owner',
+            isActive: true,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            platformId: data.platformId,
+            businessId: business.id,
+            userId: data.ownerUserId,
+            actor: 'partner',
+            action: 'account.onboarded',
+            resourceType: 'business',
+            resourceId: business.id,
+            newData: {
+              merchantId: business.merchantId,
+              externalCustomerId: business.externalCustomerId,
+              businessName: business.businessName,
+            },
+          },
+        });
+
+        return { account: business, isNew: true };
+      },
+      TX_OPTIONS
+    );
+
+    return result;
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === 'P2002'
+    ) {
+      const raceExisting = await prisma.business.findUnique({
+        where: {
+          platformId_externalCustomerId: {
+            platformId: data.platformId,
+            externalCustomerId: data.externalCustomerId,
+          },
+        },
+      });
+      if (raceExisting) {
+        return { account: raceExisting, isNew: false };
+      }
+    }
+    throw err;
+  }
 }

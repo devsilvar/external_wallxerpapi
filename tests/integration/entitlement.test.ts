@@ -8,7 +8,7 @@ import {
   isAccountExpired,
   isPlatformExpired,
 } from '../../src/services/entitlement.service.js';
-import { issueActivationCode } from '../../src/cli/admin.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Entitlement & Kill-switch integration (tests/integration/entitlement.test.ts)', () => {
   const testId = `entitle-${Date.now()}`;
@@ -21,7 +21,7 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let token: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     // 1. Create User
@@ -34,10 +34,13 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
     userId = user.id;
 
     // 2. Create Platform
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Entitlement Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
         isActive: true,
       },
     });
@@ -56,16 +59,10 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
       },
     });
     businessId = biz.id;
-
-    // 4. Activate token
-    const { code } = await issueActivationCode(businessId);
-    const act = await request(app).post('/api/external/v1/auth/activate').send({ code });
-    token = act.body.data.token;
   });
 
   afterAll(async () => {
     await prisma.auditLog.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -98,67 +95,25 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
   });
 
   describe('Middleware entitlement gates (P2-05 & P2-08)', () => {
-    it('allows access to data routes and /me when active and unexpired', async () => {
-      const ping = await request(app)
-        .get(`/api/external/v1/accounts/${businessId}/ping`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(ping.status).toBe(200);
-
-      const me = await request(app)
-        .get('/api/external/v1/me')
-        .set('Authorization', `Bearer ${token}`);
-      expect(me.status).toBe(200);
-      expect(me.body.data.accountId).toBe(businessId);
+    it('allows access to data routes when active', async () => {
+      const res = await request(app)
+        .get(`/api/external/v1/accounts/${businessId}`)
+        .set('Authorization', `Bearer ${apiKey}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.id).toBe(businessId);
     });
 
-    it('returns 402 on data routes and 200 on /me when account subscription is expired', async () => {
-      const past = new Date(Date.now() - 10000);
-      await prisma.business.update({
-        where: { id: businessId },
-        data: { subscriptionExpiresAt: past },
-      });
-
-      // Data route must return 402 SUBSCRIPTION_EXPIRED
-      const dataRes = await request(app)
-        .get(`/api/external/v1/accounts/${businessId}/ping`)
-        .set('Authorization', `Bearer ${token}`);
-      expect(dataRes.status).toBe(402);
-      expect(dataRes.body.error.code).toBe('SUBSCRIPTION_EXPIRED');
-      expect(dataRes.body.error.details.expiresAt).toBeDefined();
-
-      // /me is exempt and answers 200
-      const meRes = await request(app)
-        .get('/api/external/v1/me')
-        .set('Authorization', `Bearer ${token}`);
-      expect(meRes.status).toBe(200);
-      expect(meRes.body.data.subscriptionExpiresAt).toBeDefined();
-
-      // Restore account subscription
-      await prisma.business.update({
-        where: { id: businessId },
-        data: { subscriptionExpiresAt: null },
-      });
-    });
-
-    it('returns 403 ACCOUNT_INACTIVE on data routes and 200 on /me when account is inactive', async () => {
+    it('returns 403 ACCOUNT_INACTIVE on data routes when account is inactive', async () => {
       await prisma.business.update({
         where: { id: businessId },
         data: { isActive: false },
       });
 
-      // Data route returns 403 ACCOUNT_INACTIVE
       const dataRes = await request(app)
-        .get(`/api/external/v1/accounts/${businessId}/ping`)
-        .set('Authorization', `Bearer ${token}`);
+        .get(`/api/external/v1/accounts/${businessId}`)
+        .set('Authorization', `Bearer ${apiKey}`);
       expect(dataRes.status).toBe(403);
       expect(dataRes.body.error.code).toBe('ACCOUNT_INACTIVE');
-
-      // /me is exempt and answers 200
-      const meRes = await request(app)
-        .get('/api/external/v1/me')
-        .set('Authorization', `Bearer ${token}`);
-      expect(meRes.status).toBe(200);
-      expect(meRes.body.data.isActive).toBe(false);
 
       // Restore account active status
       await prisma.business.update({
@@ -167,37 +122,31 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
       });
     });
 
-    it('returns 403 PLATFORM_SUSPENDED on data routes and 200 on /me when platform is suspended', async () => {
+    it('returns 403 PLATFORM_SUSPENDED on data routes when platform is suspended', async () => {
       await prisma.platform.update({
         where: { id: platformId },
         data: {
+          isActive: false,
           suspendedAt: new Date(),
           suspendedReason: 'Regulatory compliance audit in progress',
         },
       });
 
-      // Data route returns 403 PLATFORM_SUSPENDED
       const dataRes = await request(app)
-        .get(`/api/external/v1/accounts/${businessId}/ping`)
-        .set('Authorization', `Bearer ${token}`);
+        .get(`/api/external/v1/accounts/${businessId}`)
+        .set('Authorization', `Bearer ${apiKey}`);
       expect(dataRes.status).toBe(403);
       expect(dataRes.body.error.code).toBe('PLATFORM_SUSPENDED');
       expect(dataRes.body.error.message).toContain('Regulatory compliance');
 
-      // /me is exempt and answers 200
-      const meRes = await request(app)
-        .get('/api/external/v1/me')
-        .set('Authorization', `Bearer ${token}`);
-      expect(meRes.status).toBe(200);
-
       // Restore platform
       await prisma.platform.update({
         where: { id: platformId },
-        data: { suspendedAt: null, suspendedReason: null },
+        data: { isActive: true, suspendedAt: null, suspendedReason: null },
       });
     });
 
-    it('confirms account data is preserved across expiry and suspension without loss', async () => {
+    it('confirms account data is preserved across suspension without loss', async () => {
       const biz = await prisma.business.findUnique({
         where: { id: businessId },
       });

@@ -48,7 +48,6 @@ describe('Provisioning CLI (tests/integration/provisioning.test.ts)', () => {
 
     if (bizIds.length > 0) {
       await prisma.auditLog.deleteMany({ where: { businessId: { in: bizIds } } });
-      await prisma.externalDevice.deleteMany({ where: { businessId: { in: bizIds } } });
       await prisma.businessMember.deleteMany({ where: { businessId: { in: bizIds } } });
       await prisma.business.deleteMany({ where: { id: { in: bizIds } } });
     }
@@ -70,15 +69,6 @@ describe('Provisioning CLI (tests/integration/provisioning.test.ts)', () => {
       // Verify 100 businesses in DB
       const count = await prisma.business.count({ where: { platformId } });
       expect(count).toBe(100);
-
-      // Verify every business has exactly one dormant device with no code and no token
-      const devices = await prisma.externalDevice.findMany({ where: { platformId } });
-      expect(devices).toHaveLength(100);
-      for (const dev of devices) {
-        expect(dev.codeHash).toBeNull();
-        expect(dev.tokenHash).toBeNull();
-        expect(dev.activatedAt).toBeNull();
-      }
 
       // Verify audit logs
       const auditLogs = await prisma.auditLog.findMany({

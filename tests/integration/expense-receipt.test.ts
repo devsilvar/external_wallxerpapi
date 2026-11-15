@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Expense receipt and tax safety (tests/integration/expense-receipt.test.ts)', () => {
   const testId = `exp-rcpt-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Expense Receipt Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -46,21 +49,10 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
     await prisma.expense.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -69,7 +61,7 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
   it('creates expense without receiptUrl (null/omitted) and verifies isDeductible is false in DB', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `exp-no-rcpt-${testId}`,
         description: 'Office supplies without receipt',
@@ -93,7 +85,7 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
     const receiptUrl = 'https://storage.example.com/receipts/inv-9981.pdf';
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `exp-with-rcpt-${testId}`,
         category: 'fuel',
@@ -117,7 +109,7 @@ describe('Expense receipt and tax safety (tests/integration/expense-receipt.test
   it('rejects attempts to inject isDeductible or vatRate with 400 UNKNOWN_FIELD', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `exp-hacked-${testId}`,
         description: 'Hacked tax deduction attempt',

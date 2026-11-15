@@ -1,11 +1,8 @@
-import { issueActivationCode } from '../cli/admin.js';
 import {
   getAccountDetailAdmin,
   getUsageStatsAdmin,
-  listAccountDevicesAdmin,
   listAccountsAdmin,
   listPlatformsAdmin,
-  revokeDeviceAdmin,
   searchAuditLogsAdmin,
   updateAccountAdmin,
   updatePlatformAdmin,
@@ -64,34 +61,6 @@ export async function patchAccountAdmin(accountId: string, data: { isActive: boo
     throw new AppError(404, 'NOT_FOUND', 'Account not found');
   }
   return updateAccountAdmin(accountId, data);
-}
-
-export async function fetchAccountDevicesAdmin(accountId: string) {
-  const existing = await getAccountDetailAdmin(accountId);
-  if (!existing) {
-    throw new AppError(404, 'NOT_FOUND', 'Account not found');
-  }
-  return listAccountDevicesAdmin(accountId);
-}
-
-export async function revokeAccountDeviceAdmin(deviceId: string, accountId: string) {
-  const existing = await getAccountDetailAdmin(accountId);
-  if (!existing) {
-    throw new AppError(404, 'NOT_FOUND', 'Account not found');
-  }
-  const revoked = await revokeDeviceAdmin(deviceId, accountId);
-  if (!revoked) {
-    throw new AppError(404, 'NOT_FOUND', 'Device not found for this account');
-  }
-  return { revoked: true };
-}
-
-export async function issueAccountCodeAdmin(accountId: string) {
-  const existing = await getAccountDetailAdmin(accountId);
-  if (!existing) {
-    throw new AppError(404, 'NOT_FOUND', 'Account not found');
-  }
-  return issueActivationCode(accountId);
 }
 
 export async function fetchAuditLogsAdmin(params: {

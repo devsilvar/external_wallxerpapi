@@ -56,8 +56,8 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
   let userId: string;
   let userId2: string;
   let businessId: string;
-  let deviceId: string;
-  let deviceToken: string;
+  let partnerApiKey: string;
+  let orphanBusinessId: string;
 
   // Admin token values
   let validAdminToken: string;
@@ -79,10 +79,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
   let ipMultiAdminToken: string;
   let ipMultiAdminId: string;
 
-  // A second device (for wrong-account revoke guard test)
-  let orphanDeviceId: string;
-  let orphanBusinessId: string;
-
   beforeAll(async () => {
     // ── Seed user
     const user = await prisma.user.create({
@@ -103,10 +99,12 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
     userId2 = user2.id;
 
     // ── Seed primary platform
+    partnerApiKey = generateToken();
     const platform = await prisma.platform.create({
       data: {
         name: `QAH Platform ${testId}`,
         ownerUserId: userId,
+        apiKeyHash: hashToken(partnerApiKey),
         isActive: true,
         flatFeeNgn: '50.00',
         subscriptionExpiresAt: new Date(Date.now() + 30 * 86_400_000),
@@ -140,19 +138,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
     });
     businessId = biz.id;
 
-    // ── Seed device on primary business
-    deviceToken = generateToken();
-    const dev = await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-        lastSeenAt: new Date(),
-      },
-    });
-    deviceId = dev.id;
-
     // ── Seed an orphan business (second business — different from primary)
     const orphanBiz = await prisma.business.create({
       data: {
@@ -166,18 +151,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       },
     });
     orphanBusinessId = orphanBiz.id;
-
-    // ── Seed an orphan device (belongs to orphan business, NOT primaryBusiness)
-    const orphanDev = await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId: orphanBusinessId,
-        tokenHash: hashToken(generateToken()),
-        activatedAt: new Date(),
-        lastSeenAt: new Date(),
-      },
-    });
-    orphanDeviceId = orphanDev.id;
 
     // ── Admin tokens ─────────────────────────────────────────────
 
@@ -261,12 +234,9 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       });
     }
 
-    // Clean up devices
+    // Clean up businesses
     const bizIds = [businessId, orphanBusinessId].filter(Boolean);
     if (bizIds.length > 0) {
-      await prisma.externalDevice.deleteMany({
-        where: { businessId: { in: bizIds } },
-      });
       await prisma.business.deleteMany({
         where: { id: { in: bizIds } },
       });
@@ -341,10 +311,10 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       expect(res.body.error.code).toBe('TOKEN_INVALID');
     });
 
-    it('A-07: valid device token on /admin/* → 401 TOKEN_INVALID', async () => {
+    it('A-07: valid partner platform API key on /admin/* → 401 TOKEN_INVALID', async () => {
       const res = await request(app)
         .get(BASE)
-        .set('Authorization', `Bearer ${deviceToken}`);
+        .set('Authorization', `Bearer ${partnerApiKey}`);
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('TOKEN_INVALID');
     });
@@ -726,8 +696,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       expect(data.entities.invoices).toBeGreaterThanOrEqual(0);
       expect(typeof data.entities.expenses).toBe('number');
       expect(data.entities.expenses).toBeGreaterThanOrEqual(0);
-      expect(typeof data.entities.devices).toBe('number');
-      expect(data.entities.devices).toBeGreaterThanOrEqual(0);
 
       // adminCredentials
       expect(Array.isArray(data.adminCredentials.warnings)).toBe(true);
@@ -961,133 +929,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
         .send({ isActive: true });
       expect(res.status).toBe(200);
       expect(res.body.data.isActive).toBe(true);
-    });
-  });
-
-  // =================================================================
-  // I. DEVICE REVOCATION GUARDS
-  // =================================================================
-  describe('I. Device revocation guards', () => {
-    it('I-01: revoke device belonging to wrong account → 404', async () => {
-      // orphanDeviceId belongs to orphanBusinessId, NOT businessId
-      const res = await request(app)
-        .post(
-          `/api/external/v1/admin/accounts/${businessId}/devices/${orphanDeviceId}/revoke`
-        )
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-
-    it('I-02: revoke device on non-existent account → 404', async () => {
-      const res = await request(app)
-        .post(
-          `/api/external/v1/admin/accounts/${NULL_UUID}/devices/${deviceId}/revoke`
-        )
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-
-    it('I-03: revoke an already-revoked device → idempotent (200 or 404 — verify consistent behavior)', async () => {
-      // First revoke
-      await request(app)
-        .post(
-          `/api/external/v1/admin/accounts/${orphanBusinessId}/devices/${orphanDeviceId}/revoke`
-        )
-        .set('Authorization', `Bearer ${validAdminToken}`);
-
-      // Second revoke (idempotency)
-      const res = await request(app)
-        .post(
-          `/api/external/v1/admin/accounts/${orphanBusinessId}/devices/${orphanDeviceId}/revoke`
-        )
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      // Should be idempotent 200 (not 409 Conflict)
-      expect([200, 404]).toContain(res.status);
-    });
-
-    it('I-04: list devices for non-existent account → 404', async () => {
-      const res = await request(app)
-        .get(`/api/external/v1/admin/accounts/${NULL_UUID}/devices`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-  });
-
-  // =================================================================
-  // J. ISSUE-CODE ADVERSARIAL
-  // =================================================================
-  describe('J. Issue-code adversarial', () => {
-    it('J-01: POST /admin/accounts/null-uuid/issue-code → 404', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${NULL_UUID}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-
-    it('J-02: issued code is exactly 10 chars', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(200);
-      expect(res.body.data.code).toHaveLength(10);
-    });
-
-    it('J-03: issued code uses only Crockford base32 alphabet (no I, L, O, U)', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(200);
-      const code: string = res.body.data.code;
-      expect(isCrockford(code)).toBe(true);
-      // Explicitly assert no forbidden chars
-      expect(code.toUpperCase()).not.toMatch(/[ILOU]/);
-    });
-
-    it('J-04: issued code has codeExpiresAt set and in the future', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(200);
-      expect(res.body.data.expiresAt).toBeDefined();
-      const expiresAt = new Date(res.body.data.expiresAt as string).getTime();
-      expect(expiresAt).toBeGreaterThan(Date.now());
-    });
-
-    it('J-05: calling /issue-code twice → second call succeeds (new code or replacement)', async () => {
-      const res1 = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      const res2 = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res1.status).toBe(200);
-      expect(res2.status).toBe(200);
-      // Both codes must be valid 10-char Crockford
-      expect(res1.body.data.code).toHaveLength(10);
-      expect(res2.body.data.code).toHaveLength(10);
-      expect(isCrockford(res1.body.data.code as string)).toBe(true);
-      expect(isCrockford(res2.body.data.code as string)).toBe(true);
-    });
-
-    it('J-06: issued code is stored as hash in DB (not plaintext)', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(200);
-      const code: string = res.body.data.code;
-
-      // Verify plaintext code is NOT stored directly in codeHash
-      const devWithPlaintext = await prisma.externalDevice.findFirst({
-        where: { businessId, codeHash: code },
-      });
-      expect(devWithPlaintext).toBeNull();
-
-      // Verify the hash of the code IS stored
-      const codeHash = hashToken(code);
-      const devWithHash = await prisma.externalDevice.findFirst({
-        where: { businessId, codeHash },
-      });
-      expect(devWithHash).not.toBeNull();
     });
   });
 

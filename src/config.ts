@@ -15,11 +15,8 @@ const EnvSchema = z.object({
 
   INSTANCE_COUNT: z.coerce.number().int().positive().default(1),
   EXTERNAL_DATA_RATE_LIMIT: z.coerce.number().int().positive().default(120),
-  EXTERNAL_ACTIVATION_RATE_LIMIT: z.coerce.number().int().positive().default(10),
   EXTERNAL_PUBLIC_PDF_RATE_LIMIT: z.coerce.number().int().positive().default(30),
 
-  EXTERNAL_ROTATE_GRACE_MINUTES: z.coerce.number().int().nonnegative().default(10),
-  EXTERNAL_CODE_TTL_HOURS: z.coerce.number().int().positive().default(72),
   EXTERNAL_SHARE_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   EXTERNAL_TOMBSTONE_RETENTION_DAYS: z.coerce.number().int().positive().default(180),
   EXTERNAL_AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(730),

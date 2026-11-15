@@ -8,14 +8,478 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  // Migrations take advisory locks, which a transaction-mode pooler (port 6543)
-  // cannot hold. Locally both point at the Supabase session pooler; on Railway
-  // this is unset and `url` is used.
   directUrl = env("DIRECT_URL")
 }
 
-// Phase 1 adds the fifteen models: users, businesses, business_members,
-// customers, sales_transactions, sale_line_items, expenses, invoices,
-// invoice_lines, audit_logs, platforms, external_devices, external_tombstones,
-// external_sequences, external_admins. Phase 0 ships an empty schema so that
-// `prisma validate` and `prisma generate` run in CI from day one.
+// ---------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------
+
+enum UserRole {
+  user
+  admin
+}
+
+enum BusinessRole {
+  owner
+  manager
+  sales_staff
+  accountant
+  viewer
+}
+
+enum TransactionStatus {
+  confirmed
+  completed
+  pending
+  reversed
+  disputed
+}
+
+enum InvoiceStatus {
+  draft
+  sent
+  paid
+  overdue
+  cancelled
+}
+
+enum InvoicePaymentMethod {
+  cash
+  bank_transfer
+  pos
+  card
+  mobile_money
+  cheque
+  online
+  other
+}
+
+enum SalesSource {
+  bank_transfer
+  paycode
+  pos
+  online_store
+  manual
+  cash
+  invoice
+  credit
+  store_voucher
+  api
+  card
+  mobile_money
+  ussd
+  cheque
+  other
+}
+
+enum ExpenseCategory {
+  bad_debt
+  bank_charges
+  communication
+  depreciation
+  fuel
+  gift
+  insurance
+  interest
+  inventory
+  logistics
+  marketing
+  office_supplies
+  other
+  professional_fees
+  rent
+  repairs_maintenance
+  salary
+  subscription
+  tax_permit
+  travel
+  utility
+  power
+  statutory_contributions
+  staff_welfare
+  training
+  security
+  licenses_permits
+}
+
+// ---------------------------------------------------------
+// CORE MODELS
+// ---------------------------------------------------------
+
+model User {
+  id                         String    @id @default(uuid())
+  email                      String?   @unique
+  passwordHash               String?   @map("password_hash")
+  phone                      String?   @unique
+  fullName                   String?   @map("full_name")
+  bvn                        String?   @map("bvn_encrypted") @db.Text
+  bvnHash                    String?   @map("bvn_hash") @db.VarChar(64)
+  nin                        String?   @map("nin_encrypted") @db.Text
+  ninHash                    String?   @map("nin_hash") @db.VarChar(64)
+  bvnVerifiedAt              DateTime? @map("bvn_verified_at")
+  ninVerifiedAt              DateTime? @map("nin_verified_at")
+  isVerified                 Boolean   @default(false) @map("is_verified")
+  verificationTokenHash      String?   @map("verification_token_hash")
+  verificationTokenExpiresAt DateTime? @map("verification_token_expires_at")
+  verifiedAt                 DateTime? @map("verified_at")
+  isActive                   Boolean   @default(true) @map("is_active")
+  lastLoginAt                DateTime? @map("last_login_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+  resetTokenExpiresAt        DateTime? @map("reset_token_expires_at")
+  resetTokenHash             String?   @map("reset_token_hash")
+  role                       UserRole  @default(user)
+  transactionPin             String?   @map("transaction_pin")
+  pinAttempts                Int       @default(0) @map("pin_attempts")
+  pinLockedUntil             DateTime? @map("pin_locked_until")
+  pinAttemptsResetAt         DateTime? @map("pin_attempts_reset_at")
+  pinSetAt                   DateTime? @map("pin_set_at")
+
+  regulatoryTermsAcceptedAt DateTime? @map("regulatory_terms_accepted_at")
+  regulatoryTermsVersion    String?   @map("regulatory_terms_version")
+
+  settlementBankCode      String?   @map("settlement_bank_code")
+  settlementBankName      String?   @map("settlement_bank_name")
+  settlementAccountNumber String?   @map("settlement_account_number")
+  settlementAccountName   String?   @map("settlement_account_name")
+  settlementConnectedAt   DateTime? @map("settlement_connected_at")
+  autoPayoutEnabled       Boolean   @default(false) @map("auto_payout_enabled")
+
+  paystackCustomerCode String?   @map("paystack_customer_code")
+  virtualAccountNumber String?   @map("virtual_account_number")
+  virtualAccountBank   String?   @map("virtual_account_bank")
+  primaryBusinessId    String?   @map("primary_business_id")
+  primaryBusiness      Business? @relation("PrimaryBusiness", fields: [primaryBusinessId], references: [id], onDelete: SetNull)
+
+  subscriptionTier      String?   @default("free") @map("subscription_tier")
+  subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  trialEndsAt           DateTime? @map("trial_ends_at")
+  acquisitionSource     String?   @map("acquisition_source")
+
+  auditLogs   AuditLog[]
+  businesses  Business[]
+  memberships BusinessMember[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([bvnHash])
+  @@index([ninHash])
+  @@index([verificationTokenHash])
+  @@map("users")
+}
+
+model Business {
+  id                    String    @id @default(uuid())
+  platformId            String    @map("platform_id")
+  externalCustomerId    String    @map("external_customer_id")
+  userId                String    @map("user_id")
+  businessName          String    @map("business_name")
+  ownerName             String    @map("owner_name")
+  taxId                 String?   @unique @map("tax_id")
+  businessType          String?   @map("business_type")
+  address               String?
+  city                  String?
+  state                 String?
+  contactPhone          String?   @map("contact_phone")
+  contactEmail          String?   @map("contact_email")
+  isActive              Boolean   @default(true) @map("is_active")
+  subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  defaultProfitMargin   Decimal   @default(20.00) @map("default_profit_margin") @db.Decimal(5, 2)
+  taxReminderDay        Int       @default(25) @map("tax_reminder_day")
+  logoUrl               String?   @map("logo_url")
+  logoPublicId          String?   @map("logo_public_id")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  merchantId            String    @unique @map("merchant_id")
+
+  auditLogs       AuditLog[]
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  primaryForUsers User[]             @relation("PrimaryBusiness")
+  customers       Customer[]
+  expenses        Expense[]
+  invoices        Invoice[]
+  sales           SalesTransaction[]
+  members         BusinessMember[]
+
+  @@unique([platformId, externalCustomerId])
+  @@index([userId])
+  @@index([taxId])
+  @@map("businesses")
+}
+
+model BusinessMember {
+  id          String       @id @default(uuid())
+  businessId  String       @map("business_id")
+  userId      String       @map("user_id")
+  role        BusinessRole @default(viewer)
+  permissions Json?        @db.JsonB
+  isActive    Boolean      @default(true) @map("is_active")
+  joinedAt    DateTime     @default(now()) @map("joined_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+  @@index([businessId, role])
+  @@map("business_members")
+}
+
+model Customer {
+  id              String   @id @default(uuid())
+  businessId      String   @map("business_id")
+  externalId      String   @map("external_id")
+  name            String
+  email           String?
+  phone           String?
+  address         String?
+  city            String?
+  state           String?
+  taxId           String?  @map("tax_id")
+  notes           String?
+  isActive        Boolean  @default(true) @map("is_active")
+  voucherBonusPct Decimal? @map("voucher_bonus_pct") @db.Decimal(5, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+  sales    SalesTransaction[]
+
+  @@unique([businessId, externalId])
+  @@index([businessId, name])
+  @@index([businessId, phone])
+  @@index([businessId, isActive])
+  @@map("customers")
+}
+
+model SalesTransaction {
+  id                  String            @id @default(uuid())
+  businessId          String            @map("business_id")
+  amount              Decimal           @db.Decimal(15, 2)
+  source              SalesSource
+  status              TransactionStatus @default(confirmed)
+  referenceId         String            @map("reference_id")
+  description         String?
+  customerName        String?           @map("customer_name")
+  transactionDate     DateTime          @map("transaction_date") @db.Date
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  createdBy           String?           @map("created_by")
+  metadata            Json?
+  settledViaSplit     Boolean           @default(false) @map("settled_via_split")
+  splitPct            Decimal?          @map("split_pct") @db.Decimal(5, 2)
+  platformRetained    Decimal?          @map("platform_retained") @db.Decimal(15, 2)
+  needsVerification   Boolean           @default(false) @map("needs_verification")
+  verifiedAt          DateTime?         @map("verified_at")
+  verifiedBy          String?           @map("verified_by")
+  customerHint        String?           @map("customer_hint")
+  finalClassification String?           @map("final_classification")
+  isTaxable           Boolean           @default(true) @map("is_taxable")
+  dvaOrigin           Boolean           @default(false) @map("dva_origin")
+  settledAt           DateTime?         @map("settled_at")
+
+  invoice    Invoice?
+  customerId String?        @map("customer_id")
+  customer   Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items      SaleLineItem[]
+
+  @@unique([businessId, source, referenceId], name: "unique_sales_reference")
+  @@index([businessId, updatedAt, id])
+  @@index([businessId, transactionDate(sort: Desc)])
+  @@index([referenceId])
+  @@index([source])
+  @@index([customerId])
+  @@index([needsVerification], map: "idx_sales_needs_verification")
+  @@index([needsVerification, transactionDate(sort: Desc)], map: "idx_sales_unverified_queue")
+  @@index([businessId, status, isTaxable, transactionDate, amount], map: "idx_sales_tax_calc")
+  @@map("sales_transactions")
+}
+
+model SaleLineItem {
+  id        String   @id @default(uuid())
+  saleId    String   @map("sale_id")
+  name      String   @db.VarChar(200)
+  quantity  Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice Decimal  @map("unit_price") @db.Decimal(15, 2)
+  lineTotal Decimal  @map("line_total") @db.Decimal(15, 2)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sale SalesTransaction @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId, sortOrder])
+  @@map("sale_line_items")
+}
+
+model Expense {
+  id             String          @id @default(uuid())
+  businessId     String          @map("business_id")
+  externalRef    String          @map("external_ref")
+  category       ExpenseCategory
+  categoryDetail String?         @map("category_detail")
+  description    String
+  amount         Decimal         @db.Decimal(15, 2)
+  quantity       Decimal         @default(1) @db.Decimal(12, 2)
+  unitPrice      Decimal?        @map("unit_price") @db.Decimal(15, 2)
+  expenseDate    DateTime        @map("expense_date") @db.Date
+  receiptUrl     String?         @map("receipt_url")
+  isDeductible   Boolean         @default(false) @map("is_deductible")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  createdBy      String?         @map("created_by")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, externalRef])
+  @@index([businessId, updatedAt, id])
+  @@index([businessId, expenseDate(sort: Desc)])
+  @@index([category])
+  @@index([businessId, isDeductible])
+  @@index([businessId, isDeductible, expenseDate, amount], map: "idx_expense_tax_calc")
+  @@map("expenses")
+}
+
+model Invoice {
+  id                  String                @id @default(uuid())
+  businessId          String                @map("business_id")
+  customerId          String?               @map("customer_id")
+  externalRef         String                @map("external_ref")
+  invoiceNumber       String                @map("invoice_number")
+  status              InvoiceStatus         @default(draft)
+  issueDate           DateTime              @map("issue_date") @db.Date
+  dueDate             DateTime              @map("due_date") @db.Date
+  sentAt              DateTime?             @map("sent_at")
+  paidAt              DateTime?             @map("paid_at")
+  customerName        String                @map("customer_name")
+  customerEmail       String?               @map("customer_email")
+  customerPhone       String?               @map("customer_phone")
+  customerAddress     String?               @map("customer_address")
+  customerTaxId       String?               @map("customer_tax_id")
+  subtotal            Decimal               @default(0) @db.Decimal(15, 2)
+  vatRate             Decimal               @default(0) @map("vat_rate") @db.Decimal(5, 2)
+  vatAmount           Decimal               @default(0) @map("vat_amount") @db.Decimal(15, 2)
+  discount            Decimal               @default(0) @db.Decimal(15, 2)
+  total               Decimal               @default(0) @db.Decimal(15, 2)
+  currency            String                @default("NGN")
+  notes               String?
+  paymentTerms        String?               @map("payment_terms")
+  pdfUrl              String?               @map("pdf_url")
+  linkedSaleId        String?               @unique @map("linked_sale_id")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+  createdBy           String?               @map("created_by")
+  paymentMethod       InvoicePaymentMethod? @map("payment_method")
+  shareToken          String?               @unique @map("share_token")
+  shareTokenExpiresAt DateTime?             @map("share_token_expires_at")
+
+  lines      InvoiceLine[]
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer   Customer?         @relation(fields: [customerId], references: [id])
+  linkedSale SalesTransaction? @relation(fields: [linkedSaleId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, externalRef])
+  @@unique([businessId, invoiceNumber])
+  @@index([businessId, updatedAt, id])
+  @@index([businessId, issueDate(sort: Desc)])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([businessId, status])
+  @@index([customerId])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String   @id @default(uuid())
+  invoiceId   String   @map("invoice_id")
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(15, 2)
+  lineTotal   Decimal  @map("line_total") @db.Decimal(15, 2)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, sortOrder])
+  @@map("invoice_lines")
+}
+
+model AuditLog {
+  id               String   @id @default(uuid())
+  platformId       String?  @map("platform_id")
+  externalDeviceId String?  @map("external_device_id")
+  actor            String
+  userId           String?  @map("user_id")
+  businessId       String?  @map("business_id")
+  action           String
+  resourceType     String?  @map("resource_type")
+  resourceId       String?  @map("resource_id")
+  oldData          Json?    @map("old_data")
+  newData          Json?    @map("new_data")
+  ipAddress        String?  @map("ip_address")
+  userAgent        String?  @map("user_agent")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  business Business? @relation(fields: [businessId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model Platform {
+  id                    String    @id @default(uuid())
+  name                  String
+  ownerUserId           String    @unique @map("owner_user_id")
+  isActive              Boolean   @default(true) @map("is_active")
+  suspendedAt           DateTime? @map("suspended_at")
+  suspendedReason       String?   @map("suspended_reason")
+  flatFeeNgn            Decimal?  @map("flat_fee_ngn") @db.Decimal(12, 2)
+  subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  apiKeyHash            String?   @unique @map("api_key_hash") @db.VarChar(64)
+  apiKeyPrefix          String?   @map("api_key_prefix") @db.VarChar(16)
+  apiKeyLastUsedAt      DateTime? @map("api_key_last_used_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@map("platforms")
+}
+
+model ExternalTombstone {
+  id         String   @id @default(uuid())
+  businessId String   @map("business_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([businessId, createdAt, id])
+  @@map("external_tombstones")
+}
+
+model ExternalSequence {
+  key   String @id
+  value Int    @default(0)
+
+  @@map("external_sequences")
+}
+
+model ExternalAdmin {
+  id         String    @id @default(uuid())
+  name       String
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  role       String    @default("admin")
+  expiresAt  DateTime? @map("expires_at")
+  allowedIps String[]  @default([]) @map("allowed_ips")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("external_admins")
+}

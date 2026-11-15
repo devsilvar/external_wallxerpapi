@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Public invoice PDF capability link (tests/integration/public-pdf.test.ts)', () => {
   const testId = `pub-pdf-${Date.now()}`;
@@ -18,7 +18,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -29,10 +29,13 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Public PDF Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -48,22 +51,11 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
     await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
     await prisma.invoice.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -73,7 +65,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pub-link-${testId}`,
         customerName: 'Public Customer',
@@ -88,7 +80,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 2. Generate pdf-link
     const linkRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     expect(linkRes.status).toBe(200);
     const pdfUrl = linkRes.body.data.pdfUrl;
@@ -110,7 +102,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pub-rotate-${testId}`,
         customerName: 'Rotate Customer',
@@ -123,7 +115,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 2. Mint first link
     const link1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     const url1 = link1.body.data.pdfUrl;
 
     // First link works
@@ -133,7 +125,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 3. Mint second link (replaces the token)
     const link2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     const url2 = link2.body.data.pdfUrl;
     expect(url2).not.toBe(url1);
 
@@ -151,7 +143,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pub-expired-${testId}`,
         customerName: 'Expired Token Customer',
@@ -164,7 +156,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 2. Mint link
     const linkRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     const pdfUrl = linkRes.body.data.pdfUrl;
 
     // 3. Manually expire token in database
@@ -185,7 +177,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pub-cancelled-${testId}`,
         customerName: 'Cancelled Token Customer',
@@ -198,13 +190,13 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 2. Mint link
     const linkRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     const pdfUrl = linkRes.body.data.pdfUrl;
 
     // 3. Cancel the invoice
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/cancel`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     // 4. Request returns 410 INVOICE_CANCELLED
     const res = await request(app).get(pdfUrl);
@@ -216,7 +208,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 1. Create invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pub-rate-limit-${testId}`,
         customerName: 'Rate Limit Customer',
@@ -229,7 +221,7 @@ describe('Public invoice PDF capability link (tests/integration/public-pdf.test.
     // 2. Mint link
     const linkRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     const pdfUrl = linkRes.body.data.pdfUrl;
 
     // 3. Fire requests up to and beyond limit (configured to 5 in this test file)

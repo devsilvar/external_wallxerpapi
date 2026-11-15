@@ -45,7 +45,6 @@ describe('Safe tax defaults (tests/integration/tax-defaults.test.ts)', () => {
     await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId } } });
     await prisma.invoice.deleteMany({ where: { businessId } });
     await prisma.expense.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.businessMember.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });

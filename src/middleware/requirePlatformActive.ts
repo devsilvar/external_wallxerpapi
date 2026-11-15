@@ -12,11 +12,11 @@ export async function requirePlatformActive(
     return next();
   }
 
-  if (!req.device?.platformId) {
+  if (!req.platform?.id) {
     return next(new AppError(401, 'TOKEN_INVALID', 'Authentication required'));
   }
 
-  const platform = await findPlatformEntitlement(req.device.platformId);
+  const platform = await findPlatformEntitlement(req.platform.id);
 
   if (!platform || !platform.isActive || platform.suspendedAt) {
     return next(

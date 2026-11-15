@@ -13,10 +13,7 @@ describe('loadConfig', () => {
     expect(config.EXTERNAL_API_ENABLED).toBe(true);
     expect(config.INSTANCE_COUNT).toBe(1);
     expect(config.EXTERNAL_DATA_RATE_LIMIT).toBe(120);
-    expect(config.EXTERNAL_ACTIVATION_RATE_LIMIT).toBe(10);
     expect(config.EXTERNAL_PUBLIC_PDF_RATE_LIMIT).toBe(30);
-    expect(config.EXTERNAL_ROTATE_GRACE_MINUTES).toBe(10);
-    expect(config.EXTERNAL_CODE_TTL_HOURS).toBe(72);
     expect(config.EXTERNAL_SHARE_TOKEN_TTL_DAYS).toBe(30);
     expect(config.EXTERNAL_TOMBSTONE_RETENTION_DAYS).toBe(180);
     expect(config.EXTERNAL_AUDIT_RETENTION_DAYS).toBe(730);

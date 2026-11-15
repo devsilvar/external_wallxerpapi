@@ -96,15 +96,7 @@ export async function provisionAccounts(
             },
           });
 
-          // 5. Create dormant ExternalDevice (no code, no token)
-          await tx.externalDevice.create({
-            data: {
-              platformId,
-              businessId: business.id,
-            },
-          });
-
-          // 6. AuditLog
+          // 5. AuditLog
           await tx.auditLog.create({
             data: {
               platformId,

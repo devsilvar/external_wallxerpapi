@@ -1,5 +1,6 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { AppError } from '../lib/errors.js';
+import { hashToken } from '../lib/token.js';
 
 interface Bucket {
   tokens: number;
@@ -100,7 +101,8 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
 export function tokenKeyGenerator(req: Request): string | undefined {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
-    return auth.slice(7).trim();
+    const raw = auth.slice(7).trim();
+    return raw ? hashToken(raw) : undefined;
   }
   return req.ip || req.socket.remoteAddress || 'unknown';
 }

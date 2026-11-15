@@ -205,16 +205,6 @@ export async function listAccountsAdmin(
   });
   const platformMap = new Map(platforms.map((p) => [p.id, p]));
 
-  const bizIds = items.map((b) => b.id);
-  const devices = await db.externalDevice.findMany({
-    where: { businessId: { in: bizIds } },
-    select: { id: true, businessId: true },
-  });
-  const deviceCounts = new Map<string, number>();
-  for (const d of devices) {
-    deviceCounts.set(d.businessId, (deviceCounts.get(d.businessId) ?? 0) + 1);
-  }
-
   return {
     items: items.map((b) => ({
       id: b.id,
@@ -225,7 +215,6 @@ export async function listAccountsAdmin(
       businessName: b.businessName,
       ownerName: b.ownerName,
       isActive: b.isActive,
-      deviceCount: deviceCounts.get(b.id) ?? 0,
       createdAt: b.createdAt.toISOString(),
       updatedAt: b.updatedAt.toISOString(),
     })),
@@ -250,24 +239,11 @@ export async function getAccountDetailAdmin(accountId: string, db: DbClient = pr
   }
 
   // Live counts across entity tables and relations
-  const [platform, devices, salesCount, invoicesCount, expensesCount, customersCount] =
+  const [platform, salesCount, invoicesCount, expensesCount, customersCount] =
     await Promise.all([
       db.platform.findUnique({
         where: { id: business.platformId },
         select: { id: true, name: true, isActive: true, subscriptionExpiresAt: true },
-      }),
-      db.externalDevice.findMany({
-        where: { businessId: accountId },
-        select: {
-          id: true,
-          deviceName: true,
-          devicePlatform: true,
-          activatedAt: true,
-          lastSeenAt: true,
-          lastSeenIp: true,
-          codeExpiresAt: true,
-          codeAttempts: true,
-        },
       }),
       db.salesTransaction.count({ where: { businessId: accountId } }),
       db.invoice.count({ where: { businessId: accountId } }),
@@ -294,15 +270,6 @@ export async function getAccountDetailAdmin(accountId: string, db: DbClient = pr
       expensesCount,
       customersCount,
     },
-    devices: devices.map((d) => ({
-      id: d.id,
-      deviceName: d.deviceName,
-      devicePlatform: d.devicePlatform,
-      isActivated: d.activatedAt !== null,
-      activatedAt: d.activatedAt?.toISOString() ?? null,
-      lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
-      lastSeenIp: d.lastSeenIp,
-    })),
     createdAt: business.createdAt.toISOString(),
     updatedAt: business.updatedAt.toISOString(),
   };
@@ -320,47 +287,6 @@ export async function updateAccountAdmin(
     where: { id: accountId },
     data: { isActive: data.isActive },
   });
-}
-
-/**
- * Lists devices for an account.
- */
-export async function listAccountDevicesAdmin(accountId: string, db: DbClient = prisma) {
-  const devices = await db.externalDevice.findMany({
-    where: { businessId: accountId },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  return devices.map((d) => ({
-    id: d.id,
-    platformId: d.platformId,
-    businessId: d.businessId,
-    deviceName: d.deviceName,
-    devicePlatform: d.devicePlatform,
-    hasToken: d.tokenHash !== null,
-    hasActiveCode: d.codeHash !== null && (d.codeExpiresAt ? d.codeExpiresAt > new Date() : false),
-    codeAttempts: d.codeAttempts,
-    activatedAt: d.activatedAt?.toISOString() ?? null,
-    lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
-    lastSeenIp: d.lastSeenIp,
-    createdAt: d.createdAt.toISOString(),
-  }));
-}
-
-/**
- * Revokes a device token and record.
- * Returns true if the device was found and deleted, false if it did not exist
- * or did not belong to the specified businessId (IDOR guard).
- */
-export async function revokeDeviceAdmin(
-  deviceId: string,
-  businessId: string,
-  db: DbClient = prisma
-): Promise<boolean> {
-  const result = await db.externalDevice.deleteMany({
-    where: { id: deviceId, businessId },
-  });
-  return result.count > 0;
 }
 
 /**
@@ -430,7 +356,6 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
     totalSales,
     totalInvoices,
     totalExpenses,
-    totalDevices,
     adminTokens,
   ] = await Promise.all([
     db.platform.count(),
@@ -440,7 +365,6 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
     db.salesTransaction.count(),
     db.invoice.count(),
     db.expense.count(),
-    db.externalDevice.count(),
     db.externalAdmin.findMany({ where: { revokedAt: null } }),
   ]);
 
@@ -465,7 +389,6 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
       sales: totalSales,
       invoices: totalInvoices,
       expenses: totalExpenses,
-      devices: totalDevices,
     },
     adminCredentials: {
       activeTokensCount: adminTokens.length,

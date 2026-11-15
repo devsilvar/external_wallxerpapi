@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Idempotency integration (tests/integration/idempotency.test.ts)', () => {
   const testId = `idempotency-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Idempotency Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -46,16 +49,6 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
@@ -63,7 +56,6 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
     await prisma.expense.deleteMany({ where: { businessId } });
     await prisma.customer.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -82,7 +74,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 1. Initial creation -> 201 Created
     const res1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/sales`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send(payload1);
 
     expect(res1.status).toBe(201);
@@ -93,7 +85,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 2. Exact replay -> 200 OK with identical sale id
     const res2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/sales`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send(payload1);
 
     expect(res2.status).toBe(200);
@@ -102,7 +94,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 3. Replay with money normalization difference ("15000" vs "15000.00") -> 200 OK
     const res3 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/sales`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         ...payload1,
         amount: 15000, // as number instead of string
@@ -114,7 +106,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 4. Same referenceId with DIFFERENT amount -> 409 DUPLICATE_REFERENCE
     const res4 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/sales`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         ...payload1,
         amount: '20000.00', // Conflict!
@@ -137,7 +129,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 1. First creation -> 201 Created
     const res1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send(payload);
 
     expect(res1.status).toBe(201);
@@ -146,7 +138,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 2. Exact replay -> 200 OK
     const res2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send(payload);
 
     expect(res2.status).toBe(200);
@@ -155,7 +147,7 @@ describe('Idempotency integration (tests/integration/idempotency.test.ts)', () =
     // 3. Same externalRef with different description -> 409 DUPLICATE_REFERENCE
     const res3 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/expenses`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         ...payload,
         description: 'Totally different item',

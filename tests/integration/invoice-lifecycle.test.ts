@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
-import { generateToken, hashToken } from '../../src/lib/token.js';
+import { generateApiKey, hashToken } from '../../src/lib/token.js';
 
 describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.test.ts)', () => {
   const testId = `inv-life-${Date.now()}`;
@@ -16,7 +16,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
   let platformId: string;
   let userId: string;
   let businessId: string;
-  let deviceToken: string;
+  let apiKey: string;
 
   beforeAll(async () => {
     const user = await prisma.user.create({
@@ -27,10 +27,13 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     });
     userId = user.id;
 
+    apiKey = generateApiKey('sk_ext_live_');
     const platform = await prisma.platform.create({
       data: {
         name: 'Invoice Lifecycle Test Platform',
         ownerUserId: userId,
+        apiKeyHash: hashToken(apiKey),
+        apiKeyPrefix: apiKey.slice(0, 16),
       },
     });
     platformId = platform.id;
@@ -46,16 +49,6 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
       },
     });
     businessId = biz.id;
-
-    deviceToken = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId,
-        tokenHash: hashToken(deviceToken),
-        activatedAt: new Date(),
-      },
-    });
   });
 
   afterAll(async () => {
@@ -64,7 +57,6 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     await prisma.invoice.deleteMany({ where: { businessId } });
     await prisma.saleLineItem.deleteMany({ where: { sale: { businessId } } });
     await prisma.salesTransaction.deleteMany({ where: { businessId } });
-    await prisma.externalDevice.deleteMany({ where: { businessId } });
     await prisma.business.deleteMany({ where: { id: businessId } });
     await prisma.platform.deleteMany({ where: { id: platformId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -73,7 +65,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
   it('creates an invoice with safe defaults (vatRate=0, vatAmount=0, total=subtotal-discount) and mints invoiceNumber', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-create-${testId}`,
         customerName: 'Amina Bello',
@@ -110,7 +102,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
   it('rejects vatRate if sent in create body with 400 UNKNOWN_FIELD', async () => {
     const res = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-vat-attempt-${testId}`,
         customerName: 'Amina Bello',
@@ -134,7 +126,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Create draft invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-put-test-${testId}`,
         customerName: 'Editable Customer',
@@ -155,7 +147,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 2. PUT from draft succeeds
     const putRes = await request(app)
       .put(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         customerName: 'Updated Customer Name',
         lines: [
@@ -174,14 +166,14 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 3. Issue invoice (draft -> sent)
     const issueRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(issueRes.status).toBe(200);
     expect(issueRes.body.data.status).toBe('sent');
 
     // 4. PUT now fails with 409 INVOICE_NOT_EDITABLE
     const putFailRes = await request(app)
       .put(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         customerName: 'Forbidden Edit',
       });
@@ -193,7 +185,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Create and issue invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-issue-replay-${testId}`,
         customerName: 'Replay Customer',
@@ -205,14 +197,14 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
 
     const issue1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(issue1.status).toBe(200);
     const sentAt1 = issue1.body.data.sentAt;
 
     // 2. Issue again -> 200 OK, same sentAt
     const issue2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(issue2.status).toBe(200);
     expect(issue2.body.data.sentAt).toBe(sentAt1);
   });
@@ -220,7 +212,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
   it('mark-paid enforces guard: draft -> 409, future date -> 400, before issueDate -> 400', async () => {
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pay-guards-${testId}`,
         customerName: 'Guard Customer',
@@ -233,7 +225,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Calling mark-paid on draft returns 409 INVOICE_NOT_SENT
     const draftPayRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({ paymentMethod: 'cash' });
     expect(draftPayRes.status).toBe(409);
     expect(draftPayRes.body.error.code).toBe('INVOICE_NOT_SENT');
@@ -241,12 +233,12 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // Issue invoice
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     // 2. Future payment date returns 400 INVALID_DATE
     const futureDateRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentDate: '2035-01-01',
         paymentMethod: 'cash',
@@ -257,7 +249,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 3. Payment date before issue date (2026-11-01 < 2026-11-10) returns 400 INVALID_DATE
     const pastDateRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentDate: '2026-11-01',
         paymentMethod: 'cash',
@@ -270,7 +262,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Create and issue invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-pay-success-${testId}`,
         customerName: 'Successful Payer',
@@ -284,12 +276,12 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
 
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     // 2. Mark as paid
     const payRes1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentDate: '2026-11-12',
         paymentMethod: 'bank_transfer',
@@ -315,7 +307,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 3. Mark paid again (replay) returns 200 OK and DOES NOT create a second sale
     const payRes2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         paymentDate: '2026-11-12',
         paymentMethod: 'bank_transfer',
@@ -334,7 +326,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Create and cancel invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-cancel-test-${testId}`,
         customerName: 'Cancel Customer',
@@ -347,25 +339,25 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // Issue invoice
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     // Cancel invoice
     const cancelRes1 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/cancel`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(cancelRes1.status).toBe(200);
     expect(cancelRes1.body.data.status).toBe('cancelled');
 
     // Replay cancel -> 200 OK
     const cancelRes2 = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${invoiceId}/cancel`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(cancelRes2.status).toBe(200);
 
     // 2. Try cancelling paid invoice -> 409 INVOICE_PAID
     const paidInvRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-paid-cannot-cancel-${testId}`,
         customerName: 'Paid Customer',
@@ -377,16 +369,16 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
 
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${paidInvId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${paidInvId}/mark-paid`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({ paymentMethod: 'cash' });
 
     const cancelPaidRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${paidInvId}/cancel`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(cancelPaidRes.status).toBe(409);
     expect(cancelPaidRes.body.error.code).toBe('INVOICE_PAID');
   });
@@ -395,7 +387,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 1. Create draft invoice
     const createRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-delete-draft-${testId}`,
         customerName: 'Delete Customer',
@@ -408,7 +400,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // Delete draft -> 200 OK
     const delDraftRes = await request(app)
       .delete(`/api/external/v1/accounts/${businessId}/invoices/${draftId}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(delDraftRes.status).toBe(200);
 
     // Verify invoice is gone
@@ -424,7 +416,7 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
     // 2. Non-draft invoice (issued) cannot be deleted -> 409 INVOICE_NOT_DELETABLE
     const issuedInvRes = await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices`)
-      .set('Authorization', `Bearer ${deviceToken}`)
+      .set('Authorization', `Bearer ${apiKey}`)
       .send({
         externalRef: `inv-delete-issued-${testId}`,
         customerName: 'Issued Customer',
@@ -436,11 +428,11 @@ describe('Invoice lifecycle state machine (tests/integration/invoice-lifecycle.t
 
     await request(app)
       .post(`/api/external/v1/accounts/${businessId}/invoices/${issuedId}/issue`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
 
     const delIssuedRes = await request(app)
       .delete(`/api/external/v1/accounts/${businessId}/invoices/${issuedId}`)
-      .set('Authorization', `Bearer ${deviceToken}`);
+      .set('Authorization', `Bearer ${apiKey}`);
     expect(delIssuedRes.status).toBe(409);
     expect(delIssuedRes.body.error.code).toBe('INVOICE_NOT_DELETABLE');
   });

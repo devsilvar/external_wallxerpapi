@@ -35,16 +35,15 @@ describe('Phase 3: Tenant isolation gate (tests/integration/tenancy.test.ts)', (
   });
   const app = createApp(config);
 
-  let platformId: string;
-  let ownerUserId: string;
-
-  // Account A (Attacker context)
-  let businessAId: string;
+  let platformAId: string;
+  let ownerUserAId: string;
   let tokenA: string;
+  let businessAId: string;
 
-  // Account B (Victim context)
-  let businessBId: string;
+  let platformBId: string;
+  let ownerUserBId: string;
   let tokenB: string;
+  let businessBId: string;
 
   // Account B's resources
   let customerBId: string;
@@ -63,30 +62,30 @@ describe('Phase 3: Tenant isolation gate (tests/integration/tenancy.test.ts)', (
   let invoiceAId: string;
 
   beforeAll(async () => {
-    // 1. Platform owner user
-    const user = await prisma.user.create({
+    // 1. Platform A (Attacker platform)
+    tokenA = generateToken();
+    const userA = await prisma.user.create({
       data: {
-        email: `${testId}-owner@example.com`,
-        fullName: 'Tenancy Test Platform Owner',
+        email: `${testId}-owner-a@example.com`,
+        fullName: 'Tenancy Platform Owner A',
       },
     });
-    ownerUserId = user.id;
+    ownerUserAId = userA.id;
 
-    // 2. Platform
-    const platform = await prisma.platform.create({
+    const platformA = await prisma.platform.create({
       data: {
-        name: 'Tenancy Test Platform',
-        ownerUserId,
+        name: 'Tenancy Test Platform A',
+        ownerUserId: ownerUserAId,
+        apiKeyHash: hashToken(tokenA),
       },
     });
-    platformId = platform.id;
+    platformAId = platformA.id;
 
-    // 3. Business A
     const bizA = await prisma.business.create({
       data: {
-        platformId,
+        platformId: platformAId,
         externalCustomerId: `cust-a-${testId}`,
-        userId: ownerUserId,
+        userId: ownerUserAId,
         businessName: 'Business A (Attacker)',
         ownerName: 'Alice Attacker',
         merchantId: `WOWO${Math.floor(1000000 + Math.random() * 9000000)}`,
@@ -94,38 +93,36 @@ describe('Phase 3: Tenant isolation gate (tests/integration/tenancy.test.ts)', (
     });
     businessAId = bizA.id;
 
-    tokenA = generateToken();
-    await prisma.externalDevice.create({
+    // 2. Platform B (Victim platform)
+    tokenB = generateToken();
+    const userB = await prisma.user.create({
       data: {
-        platformId,
-        businessId: businessAId,
-        tokenHash: hashToken(tokenA),
-        activatedAt: new Date(),
+        email: `${testId}-owner-b@example.com`,
+        fullName: 'Tenancy Platform Owner B',
       },
     });
+    ownerUserBId = userB.id;
 
-    // 4. Business B
+    const platformB = await prisma.platform.create({
+      data: {
+        name: 'Tenancy Test Platform B',
+        ownerUserId: ownerUserBId,
+        apiKeyHash: hashToken(tokenB),
+      },
+    });
+    platformBId = platformB.id;
+
     const bizB = await prisma.business.create({
       data: {
-        platformId,
+        platformId: platformBId,
         externalCustomerId: `cust-b-${testId}`,
-        userId: ownerUserId,
+        userId: ownerUserBId,
         businessName: 'Business B (Victim)',
         ownerName: 'Bob Victim',
         merchantId: `WOWO${Math.floor(1000000 + Math.random() * 9000000)}`,
       },
     });
     businessBId = bizB.id;
-
-    tokenB = generateToken();
-    await prisma.externalDevice.create({
-      data: {
-        platformId,
-        businessId: businessBId,
-        tokenHash: hashToken(tokenB),
-        activatedAt: new Date(),
-      },
-    });
 
     // 5. Seed resources under Account B
     const custB = await createCustomer(businessBId, {
@@ -230,19 +227,26 @@ describe('Phase 3: Tenant isolation gate (tests/integration/tenancy.test.ts)', (
   });
 
   afterAll(async () => {
-    const bizIds = [businessAId, businessBId];
-    await prisma.externalTombstone.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId: { in: bizIds } } } });
-    await prisma.invoice.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.saleLineItem.deleteMany({ where: { sale: { businessId: { in: bizIds } } } });
-    await prisma.salesTransaction.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.expense.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.customer.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.auditLog.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.externalDevice.deleteMany({ where: { businessId: { in: bizIds } } });
-    await prisma.business.deleteMany({ where: { id: { in: bizIds } } });
-    await prisma.platform.deleteMany({ where: { id: platformId } });
-    await prisma.user.deleteMany({ where: { id: ownerUserId } });
+    const bizIds = [businessAId, businessBId].filter((id): id is string => Boolean(id));
+    if (bizIds.length > 0) {
+      await prisma.externalTombstone.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId: { in: bizIds } } } });
+      await prisma.invoice.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.saleLineItem.deleteMany({ where: { sale: { businessId: { in: bizIds } } } });
+      await prisma.salesTransaction.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.expense.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.customer.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.auditLog.deleteMany({ where: { businessId: { in: bizIds } } });
+      await prisma.business.deleteMany({ where: { id: { in: bizIds } } });
+    }
+    const platIds = [platformAId, platformBId].filter((id): id is string => Boolean(id));
+    if (platIds.length > 0) {
+      await prisma.platform.deleteMany({ where: { id: { in: platIds } } });
+    }
+    const userIds = [ownerUserAId, ownerUserBId].filter((id): id is string => Boolean(id));
+    if (userIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    }
   });
 
   // ===========================================================================

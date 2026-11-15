@@ -12,7 +12,7 @@ export async function requireAccountActive(
     return next();
   }
 
-  const businessId = req.account?.id || req.device?.businessId;
+  const businessId = req.account?.id;
   if (!businessId) {
     return next(new AppError(401, 'TOKEN_INVALID', 'Authentication required'));
   }

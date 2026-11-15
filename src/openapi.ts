@@ -33,12 +33,12 @@ Production integration surface for POS partners, accounting integrations, and ad
 
 ### Core Integration Principles:
 1. **Authentication Boundaries**:
-   - **Partner & Merchant Routes** require \`Authorization: Bearer <device-token>\` acquired via \`/auth/activate\` or \`/auth/rotate\`.
-   - **Administrative Routes** (\`/admin/*\`) require \`Authorization: Bearer <admin-token>\` with optional CIDR/IP allowlisting and token expiry. Merchant device tokens are strictly rejected on administrative routes with \`401 TOKEN_INVALID\`.
+   - **Partner & Merchant Routes** require \`Authorization: Bearer <partner-api-key>\` issued via platform provisioning CLI (\`npm run platform:create-platform\`).
+   - **Administrative Routes** (\`/admin/*\`) require \`Authorization: Bearer <admin-token>\` with optional CIDR/IP allowlisting and token expiry.
    - **Public Routes** (\`/public/*\`, \`/health\`, \`/docs\`, \`/openapi.json\`) are unauthenticated.
 2. **Strict Account Tenancy**:
-   - All merchant data operations are scoped under \`/accounts/{accountId}\`.
-   - Accessing an account ID not owned by the authenticated device token returns \`404 NOT_FOUND\` (never \`403\`, preventing account enumeration).
+   - All merchant data operations are scoped under \`/accounts/{accountId}\`, where \`/accountId\` can be your platform's \`externalCustomerId\` or the internal account UUID.
+   - Accessing an account ID not owned by the authenticated partner platform returns \`404 NOT_FOUND\` (preventing account enumeration).
 3. **At-Least-Once Keyset Polling Guarantee**:
    - Keyset pagination over \`(updatedAt, id)\` ensures zero missed updates and stable cursor navigation across large datasets.
    - When \`updatedSince\` is provided (sync mode), results are ordered ascending \`(updatedAt, id)\`.
@@ -66,8 +66,8 @@ Production integration surface for POS partners, accounting integrations, and ad
     ],
     tags: [
       { name: 'System & Health', description: 'System health checks, probes, and operational readiness' },
-      { name: 'Authentication & Lifecycle', description: 'Device activation, token rotation with grace window, and self-revocation' },
-      { name: 'Merchant Profile', description: 'Merchant profile discovery and self-service contact updates' },
+      { name: 'Customer Onboarding', description: 'Idempotent merchant registration and customer account sync under partner platforms' },
+      { name: 'Merchant Profile', description: 'Merchant profile discovery, profit summaries, and self-service contact updates' },
       { name: 'Customers', description: 'Customer directory management with external partner ID mapping' },
       { name: 'Sales Transactions', description: 'Sales ingestion, reference reservation, and atomic deletion' },
       { name: 'Expenses', description: 'Business expense recording with non-deductible tax enforcement' },
@@ -76,17 +76,16 @@ Production integration surface for POS partners, accounting integrations, and ad
       { name: 'Public Capability Links', description: 'Unauthenticated capability endpoints for commercial invoice PDF distribution' },
       { name: 'Admin - Platforms', description: 'Platform partner management, billing fee adjustments, and suspension controls' },
       { name: 'Admin - Accounts', description: 'Merchant account lifecycle, live telemetry counts, and administrative suspension' },
-      { name: 'Admin - Devices & Codes', description: 'Device inspection, emergency token revocation, and activation code re-issuance' },
       { name: 'Admin - Audit & Observability', description: 'Platform audit logs search and security traceability' },
       { name: 'Admin - System Usage', description: 'System-wide metrics and admin credential security posture audit' },
     ],
     components: {
       securitySchemes: {
-        DeviceBearerAuth: {
+        PlatformBearerAuth: {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'Token',
-          description: 'Device Bearer Token obtained via /auth/activate or /auth/rotate (32 random bytes, base64url). Required for all merchant routes under /accounts/{accountId}/*',
+          description: 'Platform API Key (Bearer sk_ext_live_...). Required for all partner and merchant routes under /accounts/*',
         },
         AdminBearerAuth: {
           type: 'http',
@@ -284,7 +283,6 @@ Production integration surface for POS partners, accounting integrations, and ad
             contactPhone: { type: 'string', nullable: true, example: '+2348033221100' },
             isActive: { type: 'boolean', example: true },
             subscriptionExpiresAt: { type: 'string', format: 'date-time', nullable: true },
-            deviceCount: { type: 'integer', example: 2 },
             createdAt: { type: 'string', format: 'date-time' },
             updatedAt: { type: 'string', format: 'date-time' },
           },
@@ -312,7 +310,6 @@ Production integration surface for POS partners, accounting integrations, and ad
                 sales: { type: 'integer', example: 98400 },
                 invoices: { type: 'integer', example: 12350 },
                 expenses: { type: 'integer', example: 44200 },
-                devices: { type: 'integer', example: 1540 },
               },
             },
             adminCredentials: {
@@ -378,7 +375,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['System & Health'],
           summary: 'Middleware verification probe',
           description: 'Verifies the complete middleware authentication, rate limiting, and entitlement pipeline for an account.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
           ],
@@ -406,158 +403,80 @@ Production integration surface for POS partners, accounting integrations, and ad
       },
 
       // -------------------------------------------------------------
-      // AUTHENTICATION & DEVICE LIFECYCLE
+      // CUSTOMER ONBOARDING
       // -------------------------------------------------------------
-      '/api/external/v1/auth/activate': {
+      '/api/external/v1/accounts': {
         post: {
-          tags: ['Authentication & Lifecycle'],
-          summary: 'Activate dormant device with one-time code',
-          description: 'Activates a dormant device using a 10-character Crockford base32 code. Returns the raw bearer token once (never logged or retrievable).',
+          tags: ['Customer Onboarding'],
+          summary: 'Onboard or sync merchant account under partner',
+          description: 'Idempotently registers or links a merchant business under the calling partner platform. Accepts partner customer ID (cannot be a UUID) and business details. If customerId already exists under this platform, returns 200 OK with the existing account.',
+          security: [{ PlatformBearerAuth: [] }],
           requestBody: {
             required: true,
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['code'],
+                  required: ['customerId', 'businessName'],
                   properties: {
-                    code: { type: 'string', minLength: 10, maxLength: 10, example: 'A3K9M7P4WQ' },
-                    deviceName: { type: 'string', example: 'POS Terminal Counter 1' },
-                    devicePlatform: { type: 'string', example: 'android-pos' },
+                    customerId: { type: 'string', minLength: 1, maxLength: 100, example: 'CUST-8812', description: 'Your system identifier for this customer (cannot be UUID format).' },
+                    businessName: { type: 'string', minLength: 2, maxLength: 255, example: 'Lekki Supermarket Ltd' },
+                    ownerName: { type: 'string', minLength: 2, maxLength: 255, example: 'Ngozi Eze' },
+                    contactEmail: { type: 'string', format: 'email', example: 'ngozi@example.com' },
+                    contactPhone: { type: 'string', example: '+2348033221100' },
+                    address: { type: 'string', example: '14 Admiralty Way, Lekki Phase 1' },
+                    city: { type: 'string', example: 'Lagos' },
+                    state: { type: 'string', example: 'Lagos' },
+                    currency: { type: 'string', default: 'NGN', example: 'NGN' },
                   },
                 },
               },
             },
           },
           responses: {
-            '200': {
-              description: 'Device activated and bearer token minted',
+            '201': {
+              description: 'Merchant account created and linked to partner platform',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
-                      data: {
-                        type: 'object',
-                        properties: {
-                          token: { type: 'string', example: 'vX7...32-bytes-base64url...k9' },
-                          accountId: { type: 'string', format: 'uuid' },
-                          deviceId: { type: 'string', format: 'uuid' },
-                          expiresAt: { type: 'string', format: 'date-time', nullable: true },
-                        },
-                      },
+                      data: { $ref: '#/components/schemas/AccountProfile' },
                     },
                   },
                 },
               },
             },
-            '401': { description: 'Code invalid, already consumed, or expired', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } },
-          },
-        },
-      },
-      '/api/external/v1/auth/rotate': {
-        post: {
-          tags: ['Authentication & Lifecycle'],
-          summary: 'Rotate device token (grace window active)',
-          description: 'Rotates the active device token atomically. The previous token remains valid for EXTERNAL_ROTATE_GRACE_MINUTES (default 15m) before expiring.',
-          security: [{ DeviceBearerAuth: [] }],
-          responses: {
             '200': {
-              description: 'New token issued',
+              description: 'Existing merchant account matched by customerId (idempotent)',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
-                      data: {
-                        type: 'object',
-                        properties: {
-                          token: { type: 'string', example: 'mQ8...new-32-byte-token...p1' },
-                          graceExpiresAt: { type: 'string', format: 'date-time' },
-                        },
-                      },
+                      data: { $ref: '#/components/schemas/AccountProfile' },
                     },
                   },
                 },
               },
             },
-            '401': { description: 'Invalid, revoked, or expired token' },
-          },
-        },
-      },
-      '/api/external/v1/auth/revoke': {
-        post: {
-          tags: ['Authentication & Lifecycle'],
-          summary: 'Revoke device token immediately',
-          description: 'Immediately and permanently revokes the calling device token. All subsequent requests with this token fail with 401 TOKEN_REVOKED.',
-          security: [{ DeviceBearerAuth: [] }],
-          responses: {
-            '200': {
-              description: 'Token successfully revoked',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      data: {
-                        type: 'object',
-                        properties: {
-                          revoked: { type: 'boolean', example: true },
-                          revokedAt: { type: 'string', format: 'date-time' },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/api/external/v1/me': {
-        get: {
-          tags: ['Authentication & Lifecycle'],
-          summary: 'Inspect account identity & renewal status',
-          description: 'Returns account profile, subscription validity, and platform status. Exemption: Accessible even if account is suspended or subscription has lapsed.',
-          security: [{ DeviceBearerAuth: [] }],
-          responses: {
-            '200': {
-              description: 'Account status summary',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      data: {
-                        type: 'object',
-                        properties: {
-                          accountId: { type: 'string', format: 'uuid' },
-                          platformId: { type: 'string', format: 'uuid' },
-                          businessName: { type: 'string', example: 'Lekki Supermarket Ltd' },
-                          isActive: { type: 'boolean', example: true },
-                          subscriptionExpiresAt: { type: 'string', format: 'date-time', nullable: true },
-                          isExpired: { type: 'boolean', example: false },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+            '400': { $ref: '#/components/schemas/ErrorEnvelope' },
+            '401': { $ref: '#/components/schemas/ErrorEnvelope' },
+            '403': { $ref: '#/components/schemas/ErrorEnvelope' },
           },
         },
       },
 
       // -------------------------------------------------------------
-      // MERCHANT PROFILE SELF-SERVICE
+      // MERCHANT PROFILE SELF-SERVICE & PROFIT
       // -------------------------------------------------------------
       '/api/external/v1/accounts/{accountId}': {
         get: {
           tags: ['Merchant Profile'],
           summary: 'Get merchant profile',
-          description: 'Retrieves merchant profile including business name, taxId, contact details, and subscription dates.',
-          security: [{ DeviceBearerAuth: [] }],
-          parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          description: 'Retrieves merchant profile including business name, taxId, contact details, and platform linking.',
+          security: [{ PlatformBearerAuth: [] }],
+          parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string' }, description: 'External customer ID or account UUID' }],
           responses: {
             '200': { content: { 'application/json': { schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/AccountProfile' } } } } } },
             '404': { description: 'Account not found or tenant mismatch' },
@@ -567,8 +486,8 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Merchant Profile'],
           summary: 'Update merchant profile',
           description: 'Allows merchant to update contact information, address, and business name. Read-only fields (id, merchantId, isActive, createdAt) are strictly rejected with 400 UNKNOWN_FIELD.',
-          security: [{ DeviceBearerAuth: [] }],
-          parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          security: [{ PlatformBearerAuth: [] }],
+          parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string' }, description: 'External customer ID or account UUID' }],
           requestBody: {
             required: true,
             content: {
@@ -595,6 +514,49 @@ Production integration surface for POS partners, accounting integrations, and ad
           },
         },
       },
+      '/api/external/v1/accounts/{accountId}/profit-summary': {
+        get: {
+          tags: ['Merchant Profile'],
+          summary: 'Calculate net profit summary (Sales minus Expenses)',
+          description: 'Calculates total sales, total expenses, net profit, and profitability flag across transactions within a specified date window (max 366 days).',
+          security: [{ PlatformBearerAuth: [] }],
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: { type: 'string' }, description: 'External customer ID or account UUID' },
+            { name: 'startDate', in: 'query', required: false, schema: { type: 'string', format: 'date', example: '2026-01-01' } },
+            { name: 'endDate', in: 'query', required: false, schema: { type: 'string', format: 'date', example: '2026-12-31' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Profit calculation summary',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'object',
+                        properties: {
+                          totalSales: { type: 'string', example: '500000.00' },
+                          totalExpenses: { type: 'string', example: '120000.00' },
+                          netProfit: { type: 'string', example: '380000.00' },
+                          isProfitable: { type: 'boolean', example: true },
+                          currency: { type: 'string', example: 'NGN' },
+                          startDate: { type: 'string', nullable: true, example: '2026-01-01T00:00:00.000Z' },
+                          endDate: { type: 'string', nullable: true, example: '2026-12-31T23:59:59.999Z' },
+                          generatedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': { $ref: '#/components/schemas/ErrorEnvelope' },
+            '401': { $ref: '#/components/schemas/ErrorEnvelope' },
+            '404': { $ref: '#/components/schemas/ErrorEnvelope' },
+          },
+        },
+      },
 
       // -------------------------------------------------------------
       // CUSTOMERS
@@ -604,7 +566,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Customers'],
           summary: 'List customers (keyset pagination)',
           description: 'Returns keyset-paginated customer records. Supports ?updatedSince for sync.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 } },
@@ -634,7 +596,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Customers'],
           summary: 'Create or reactivate customer',
           description: 'Creates a new customer or reactivates a previously soft-deleted customer matching the unique externalId.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: {
             required: true,
@@ -667,7 +629,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Customers'],
           summary: 'Get customer by internal ID',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -680,7 +642,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         patch: {
           tags: ['Customers'],
           summary: 'Update customer',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -713,7 +675,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Customers'],
           summary: 'Soft-delete customer',
           description: 'Sets isActive=false and writes a customer tombstone for sync.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -727,7 +689,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Customers'],
           summary: 'Get customer by external ID',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'externalId', in: 'path', required: true, schema: { type: 'string' } },
@@ -747,7 +709,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Sales Transactions'],
           summary: 'List sales (keyset pagination)',
           description: 'Returns keyset-paginated sales. When ?updatedSince is present, results are sorted ascending (sync mode).',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 } },
@@ -777,7 +739,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Sales Transactions'],
           summary: 'Create sale transaction (idempotent)',
           description: 'Ingests a sale. referenceId must NOT start with WX- (reserved for commercial invoices). Replaying identical payload returns 200 OK. Differing payload returns 409 DUPLICATE_REFERENCE.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: {
             required: true,
@@ -816,7 +778,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Sales Transactions'],
           summary: 'Get sale by internal ID',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -830,7 +792,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Sales Transactions'],
           summary: 'Delete sale transaction',
           description: 'Hard deletes a sale transaction and creates an external_tombstones row. Guard: Refuses with 409 SALE_LINKED_TO_INVOICE if linked to an invoice.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -849,7 +811,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Expenses'],
           summary: 'List expenses (keyset pagination)',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 } },
@@ -879,7 +841,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Expenses'],
           summary: 'Create expense (idempotent)',
           description: 'Records a business expense. Enforces isDeductible = false in the database. Injections of isDeductible or vatRate fail with 400 UNKNOWN_FIELD. receiptUrl is optional.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: {
             required: true,
@@ -914,7 +876,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Expenses'],
           summary: 'Get expense by internal ID',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -928,7 +890,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Expenses'],
           summary: 'Delete expense',
           description: 'Hard deletes an expense and creates an external_tombstones entry.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -946,7 +908,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Invoices & Commercial Documents'],
           summary: 'List commercial invoices (keyset pagination)',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 } },
@@ -976,7 +938,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Create commercial invoice',
           description: 'Mints an atomic WX-YYYY-NNN commercial invoice. Rejects discount > subtotal with 400 INVALID_DISCOUNT (never clamps). Rejects vatRate attempts.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: {
             required: true,
@@ -1015,7 +977,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Invoices & Commercial Documents'],
           summary: 'Get invoice by internal ID',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1029,7 +991,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Update draft invoice',
           description: 'Replaces line items on a draft invoice. Guard: Once sent, paid, or cancelled, returns 409 INVOICE_NOT_EDITABLE.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1059,7 +1021,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Delete draft or cancelled invoice',
           description: 'Hard deletes a draft or cancelled invoice and writes a tombstone. Guard: Non-draft invoices return 409 INVOICE_NOT_DELETABLE.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1075,7 +1037,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Issue invoice (draft -> sent)',
           description: 'Transitions invoice from draft to sent and timestamps sentAt. Calling send on an already-sent invoice is idempotent (returns 200 OK).',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1090,7 +1052,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Cancel invoice',
           description: 'Cancels a sent or overdue invoice. Guard: Refused with 409 INVOICE_PAID if already marked paid.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1106,7 +1068,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Mark invoice paid & link sale transaction',
           description: 'Transitions invoice to paid and atomically creates a linked sale transaction with referenceId equal to invoiceNumber, source=api, isTaxable=false.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1137,7 +1099,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Render commercial invoice PDF',
           description: 'Streams the rendered commercial invoice PDF buffer with security headers (X-Robots-Tag, Referrer-Policy: no-referrer). Returns 410 INVOICE_CANCELLED if cancelled.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1154,7 +1116,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Invoices & Commercial Documents'],
           summary: 'Mint public PDF capability link',
           description: 'Generates a 30-day unauthenticated public capability link. Calling again immediately rotates the share token and invalidates the previous link.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
@@ -1190,7 +1152,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           tags: ['Sync & Keyset Polling'],
           summary: 'List tombstones for synchronization',
           description: 'Returns deleted entity tombstones (sale, expense, invoice, customer) ordered by (createdAt, id) for reliable partner synchronization.',
-          security: [{ DeviceBearerAuth: [] }],
+          security: [{ PlatformBearerAuth: [] }],
           parameters: [
             { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
             { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' } },
@@ -1268,7 +1230,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         patch: {
           tags: ['Admin - Platforms'],
           summary: 'Update partner platform',
-          description: 'Updates flatFeeNgn, subscriptionExpiresAt, or suspends/resumes platform. Platform suspension immediately blocks all merchant device requests across that platform.',
+          description: 'Updates flatFeeNgn, subscriptionExpiresAt, or suspends/resumes platform. Platform suspension immediately blocks all merchant requests across that platform.',
           security: [{ AdminBearerAuth: [] }],
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           requestBody: {
@@ -1330,7 +1292,7 @@ Production integration surface for POS partners, accounting integrations, and ad
         get: {
           tags: ['Admin - Accounts'],
           summary: 'Get merchant account details & live metrics',
-          description: 'Returns merchant profile, connected devices, and live count totals of sales, invoices, and expenses.',
+          description: 'Returns merchant profile and live count totals of sales, invoices, and expenses.',
           security: [{ AdminBearerAuth: [] }],
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
           responses: {
@@ -1351,7 +1313,6 @@ Production integration surface for POS partners, accounting integrations, and ad
                             type: 'object',
                             properties: { sales: { type: 'integer' }, invoices: { type: 'integer' }, expenses: { type: 'integer' } },
                           },
-                          devices: { type: 'array', items: { type: 'object' } },
                         },
                       },
                     },
@@ -1388,107 +1349,13 @@ Production integration surface for POS partners, accounting integrations, and ad
       },
 
       // -------------------------------------------------------------
-      // ADMIN - DEVICES & CODES
-      // -------------------------------------------------------------
-      '/api/external/v1/admin/accounts/{id}/devices': {
-        get: {
-          tags: ['Admin - Devices & Codes'],
-          summary: 'List devices for an account',
-          description: 'Lists all physical devices registered or dormant for a merchant account.',
-          security: [{ AdminBearerAuth: [] }],
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-          responses: {
-            '200': {
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      data: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            id: { type: 'string', format: 'uuid' },
-                            deviceName: { type: 'string', nullable: true },
-                            devicePlatform: { type: 'string', nullable: true },
-                            activatedAt: { type: 'string', format: 'date-time', nullable: true },
-                            lastSeenAt: { type: 'string', format: 'date-time', nullable: true },
-                            revokedAt: { type: 'string', format: 'date-time', nullable: true },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/api/external/v1/admin/accounts/{id}/devices/{deviceId}/revoke': {
-        post: {
-          tags: ['Admin - Devices & Codes'],
-          summary: 'Revoke account device immediately',
-          description: 'Emergency operator revocation of a merchant device. Bypasses any rotation grace period.',
-          security: [{ AdminBearerAuth: [] }],
-          parameters: [
-            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
-            { name: 'deviceId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
-          ],
-          responses: {
-            '200': {
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: { data: { type: 'object', properties: { revoked: { type: 'boolean' } } } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/api/external/v1/admin/accounts/{id}/issue-code': {
-        post: {
-          tags: ['Admin - Devices & Codes'],
-          summary: 'Issue new activation code',
-          description: 'Mints a new 10-character Crockford base32 code (valid 7 days) and creates a dormant device record for merchant self-activation.',
-          security: [{ AdminBearerAuth: [] }],
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-          responses: {
-            '200': {
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      data: {
-                        type: 'object',
-                        properties: {
-                          code: { type: 'string', example: '7K9X2M4WQ8' },
-                          accountId: { type: 'string', format: 'uuid' },
-                          expiresAt: { type: 'string', format: 'date-time' },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-
-      // -------------------------------------------------------------
       // ADMIN - AUDIT LOGS
       // -------------------------------------------------------------
       '/api/external/v1/admin/audit-logs': {
         get: {
           tags: ['Admin - Audit & Observability'],
           summary: 'Search operational audit logs',
-          description: 'Queries administrative and device audit events with filtering by actor, action, resource, or date range.',
+          description: 'Queries administrative and operational audit events with filtering by actor, action, resource, or date range.',
           security: [{ AdminBearerAuth: [] }],
           parameters: [
             { name: 'businessId', in: 'query', schema: { type: 'string', format: 'uuid' } },

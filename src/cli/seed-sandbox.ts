@@ -3,6 +3,7 @@ import {
   type SandboxSeedResult,
   SANDBOX_PLATFORM_NAME,
   SANDBOX_EXTERNAL_CUSTOMER_ID,
+  SANDBOX_API_KEY,
   SANDBOX_TEST_TOKEN,
 } from '../db/sandbox.repo.js';
 
@@ -11,6 +12,7 @@ export {
   type SandboxSeedResult,
   SANDBOX_PLATFORM_NAME,
   SANDBOX_EXTERNAL_CUSTOMER_ID,
+  SANDBOX_API_KEY,
   SANDBOX_TEST_TOKEN,
 };
 
@@ -21,14 +23,14 @@ if (process.argv[1]?.endsWith('seed-sandbox.ts')) {
       console.log('=====================================================');
       console.log('   WOWO EXTERNAL API — SANDBOX CREDENTIALS');
       console.log('=====================================================');
-      console.log(`Account ID (businessId): ${result.businessId}`);
-      console.log(`Merchant ID:             ${result.merchantId}`);
-      console.log(`External Customer ID:    ${result.externalCustomerId}`);
-      console.log(`Sandbox Device Token:    ${result.deviceToken}`);
+      console.log(`Account ID (businessId):    ${result.businessId}`);
+      console.log(`Merchant ID:                ${result.merchantId}`);
+      console.log(`External Customer ID:       ${result.externalCustomerId}`);
+      console.log(`Platform API Key:           ${result.apiKey}`);
       console.log('');
-      console.log('Sample cURL Command:');
-      console.log(`curl -X GET "http://localhost:3000/api/external/v1/accounts/${result.businessId}/sales" \\`);
-      console.log(`     -H "Authorization: Bearer ${result.deviceToken}"`);
+      console.log('Sample cURL Command (via External Customer ID):');
+      console.log(`curl -X GET "http://localhost:3000/api/external/v1/accounts/${result.externalCustomerId}/sales" \\`);
+      console.log(`     -H "Authorization: Bearer ${result.apiKey}"`);
       console.log('=====================================================');
       process.exit(0);
     })

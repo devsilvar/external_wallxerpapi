@@ -4,14 +4,16 @@ import { logger } from '../lib/logger.js';
 
 export const SANDBOX_PLATFORM_NAME = 'Wowo Sandbox Platform';
 export const SANDBOX_EXTERNAL_CUSTOMER_ID = 'WOWO-SANDBOX-MERCHANT-01';
-export const SANDBOX_TEST_TOKEN = 'wowo_sandbox_token_7a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a';
+export const SANDBOX_API_KEY = 'wowo_sandbox_key_7a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a';
+export const SANDBOX_TEST_TOKEN = SANDBOX_API_KEY; // Backward-compat alias
 
 export interface SandboxSeedResult {
   platformId: string;
   businessId: string;
   merchantId: string;
   externalCustomerId: string;
-  deviceToken: string;
+  apiKey: string;
+  deviceToken: string; // Backward-compat alias for tests
   isNew: boolean;
 }
 
@@ -31,8 +33,11 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
     },
   });
 
-  // 2. Ensure sandbox platform exists with active entitlement
+  // 2. Ensure sandbox platform exists with active entitlement and apiKeyHash
   const futureExpiry = new Date(Date.now() + 365 * 86_400_000); // 1 year active
+  const apiKeyHash = hashToken(SANDBOX_API_KEY);
+  const apiKeyPrefix = SANDBOX_API_KEY.slice(0, 16);
+
   let platform = await db.platform.findFirst({
     where: { name: SANDBOX_PLATFORM_NAME },
   });
@@ -45,7 +50,14 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
         isActive: true,
         flatFeeNgn: '100.00',
         subscriptionExpiresAt: futureExpiry,
+        apiKeyHash,
+        apiKeyPrefix,
       },
+    });
+  } else if (!platform.apiKeyHash) {
+    platform = await db.platform.update({
+      where: { id: platform.id },
+      data: { apiKeyHash, apiKeyPrefix },
     });
   }
 
@@ -76,28 +88,6 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
     });
   }
 
-  // 4. Ensure persistent sandbox device and test token exists
-  const tokenHash = hashToken(SANDBOX_TEST_TOKEN);
-  const existingDevice = await db.externalDevice.findFirst({
-    where: {
-      platformId: platform.id,
-      businessId: business.id,
-      tokenHash,
-    },
-  });
-
-  if (!existingDevice) {
-    await db.externalDevice.create({
-      data: {
-        platformId: platform.id,
-        businessId: business.id,
-        tokenHash,
-        activatedAt: new Date(),
-        lastSeenAt: new Date(),
-      },
-    });
-  }
-
   logger.info(
     {
       platformId: platform.id,
@@ -113,7 +103,8 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
     businessId: business.id,
     merchantId: business.merchantId ?? 'WOWO-SBX-0001',
     externalCustomerId: business.externalCustomerId,
-    deviceToken: SANDBOX_TEST_TOKEN,
+    apiKey: SANDBOX_API_KEY,
+    deviceToken: SANDBOX_API_KEY,
     isNew,
   };
 }

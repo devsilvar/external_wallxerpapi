@@ -57,9 +57,6 @@ async function main() {
     await prisma.salesTransaction.deleteMany({
       where: { business: { platformId: { in: pIds } } },
     });
-    await prisma.externalDevice.deleteMany({
-      where: { platformId: { in: pIds } },
-    });
     await prisma.business.deleteMany({
       where: { platformId: { in: pIds } },
     });
@@ -79,26 +76,24 @@ async function main() {
     },
   });
 
+  const platformApiKey = generateToken();
   const platform = await prisma.platform.create({
     data: {
       name: `Scale Platform ${testBatchId}`,
       ownerUserId: user.id,
+      apiKeyHash: hashToken(platformApiKey),
     },
   });
 
   console.log(`Phase 2: Seeding ${ACCOUNT_TARGET} accounts in batches of 100...`);
-  const seededAccounts: Array<{ id: string; token: string }> = [];
+  const seededAccounts: Array<{ id: string }> = [];
   const BATCH_SIZE = 100;
 
   for (let b = 0; b < ACCOUNT_TARGET / BATCH_SIZE; b++) {
     const bizData = [];
-    const tokens: string[] = [];
 
     for (let i = 0; i < BATCH_SIZE; i++) {
       const idx = b * BATCH_SIZE + i;
-      const rawToken = generateToken();
-      tokens.push(rawToken);
-
       bizData.push({
         platformId: platform.id,
         externalCustomerId: `ext-cust-${testBatchId}-${idx}`,
@@ -123,21 +118,10 @@ async function main() {
       take: BATCH_SIZE,
     });
 
-    // Create externalDevice records for each business
-    const deviceData = createdBizs.map((biz, i) => ({
-      platformId: platform.id,
-      businessId: biz.id,
-      tokenHash: hashToken(tokens[i] ?? ''),
-      activatedAt: new Date(),
-    }));
-
-    await prisma.externalDevice.createMany({ data: deviceData });
-
     for (let i = 0; i < createdBizs.length; i++) {
       const biz = createdBizs[i];
-      const tok = tokens[i];
-      if (biz && tok) {
-        seededAccounts.push({ id: biz.id, token: tok });
+      if (biz) {
+        seededAccounts.push({ id: biz.id });
       }
     }
 
@@ -180,7 +164,7 @@ async function main() {
         const t0 = performance.now();
         const res = await request(app)
           .post(`/api/external/v1/accounts/${acc.id}/sales`)
-          .set('Authorization', `Bearer ${acc.token}`)
+          .set('Authorization', `Bearer ${platformApiKey}`)
           .send({
             referenceId: `load-sale-${Date.now()}-${Math.random()}`,
             amount: '12500.00',
@@ -198,7 +182,7 @@ async function main() {
           const t1 = performance.now();
           const readRes = await request(app)
             .get(`/api/external/v1/accounts/${acc.id}/sales/${saleId}`)
-            .set('Authorization', `Bearer ${acc.token}`);
+            .set('Authorization', `Bearer ${platformApiKey}`);
           const readDur = performance.now() - t1;
           if (readRes.status === 200) {
             singleReadLatencies.push(readDur);
@@ -219,7 +203,7 @@ async function main() {
       const t0 = performance.now();
       const listRes = await request(app)
         .get(`/api/external/v1/accounts/${acc.id}/sales?limit=50&updatedSince=2026-01-01T00:00:00.000Z`)
-        .set('Authorization', `Bearer ${acc.token}`);
+        .set('Authorization', `Bearer ${platformApiKey}`);
       const dur = performance.now() - t0;
       if (listRes.status === 200 && listRes.body.data.length === 50) {
         list50Latencies.push(dur);
@@ -270,7 +254,6 @@ async function main() {
   console.log('\nPhase 5: Cleaning up load test data...');
   const allBizIds = seededAccounts.map((a) => a.id);
   await prisma.salesTransaction.deleteMany({ where: { businessId: { in: allBizIds } } });
-  await prisma.externalDevice.deleteMany({ where: { businessId: { in: allBizIds } } });
   await prisma.business.deleteMany({ where: { id: { in: allBizIds } } });
   await prisma.platform.deleteMany({ where: { id: platform.id } });
   await prisma.user.deleteMany({ where: { id: user.id } });

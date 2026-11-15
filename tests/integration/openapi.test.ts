@@ -33,7 +33,7 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     expect(Array.isArray(spec.tags)).toBe(true);
     const tagNames = spec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('System & Health');
-    expect(tagNames).toContain('Authentication & Lifecycle');
+    expect(tagNames).toContain('Customer Onboarding');
     expect(tagNames).toContain('Merchant Profile');
     expect(tagNames).toContain('Customers');
     expect(tagNames).toContain('Sales Transactions');
@@ -43,18 +43,15 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     expect(tagNames).toContain('Public Capability Links');
     expect(tagNames).toContain('Admin - Platforms');
     expect(tagNames).toContain('Admin - Accounts');
-    expect(tagNames).toContain('Admin - Devices & Codes');
     expect(tagNames).toContain('Admin - Audit & Observability');
     expect(tagNames).toContain('Admin - System Usage');
 
     // Assert partner & merchant routes are present
     const paths = Object.keys(spec.paths);
     expect(paths).toContain('/health');
-    expect(paths).toContain('/api/external/v1/auth/activate');
-    expect(paths).toContain('/api/external/v1/auth/rotate');
-    expect(paths).toContain('/api/external/v1/auth/revoke');
-    expect(paths).toContain('/api/external/v1/me');
+    expect(paths).toContain('/api/external/v1/accounts');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}');
+    expect(paths).toContain('/api/external/v1/accounts/{accountId}/profit-summary');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}/customers');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}/sales');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}/expenses');
@@ -67,14 +64,11 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     expect(paths).toContain('/api/external/v1/admin/platforms/{id}');
     expect(paths).toContain('/api/external/v1/admin/accounts');
     expect(paths).toContain('/api/external/v1/admin/accounts/{id}');
-    expect(paths).toContain('/api/external/v1/admin/accounts/{id}/devices');
-    expect(paths).toContain('/api/external/v1/admin/accounts/{id}/devices/{deviceId}/revoke');
-    expect(paths).toContain('/api/external/v1/admin/accounts/{id}/issue-code');
     expect(paths).toContain('/api/external/v1/admin/audit-logs');
     expect(paths).toContain('/api/external/v1/admin/usage');
 
     // Assert security schemes
-    expect(spec.components.securitySchemes.DeviceBearerAuth).toBeDefined();
+    expect(spec.components.securitySchemes.PlatformBearerAuth).toBeDefined();
     expect(spec.components.securitySchemes.AdminBearerAuth).toBeDefined();
   });
 

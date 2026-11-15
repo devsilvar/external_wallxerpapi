@@ -7,11 +7,12 @@ declare global {
       /** Server-minted request ID (UUID) */
       id: string;
 
-      /** Authenticated external device */
-      device?: {
+      /** Authenticated partner platform */
+      platform?: {
         id: string;
-        businessId: string;
-        platformId: string;
+        name: string;
+        ownerUserId: string;
+        isActive: boolean;
       };
 
       /** Resolved and verified account scope */

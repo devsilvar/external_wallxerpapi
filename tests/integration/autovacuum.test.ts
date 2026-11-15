@@ -7,15 +7,15 @@ interface RelOptionRow {
 }
 
 describe('Autovacuum tuning verification (P6-04)', () => {
-  it('confirms per-table autovacuum thresholds are set on sales_transactions, audit_logs, and external_devices', async () => {
+  it('confirms per-table autovacuum thresholds are set on sales_transactions and audit_logs', async () => {
     const rows = await prisma.$queryRaw<RelOptionRow[]>`
       SELECT relname, reloptions
       FROM pg_class
-      WHERE relname IN ('sales_transactions', 'audit_logs', 'external_devices')
+      WHERE relname IN ('sales_transactions', 'audit_logs')
       ORDER BY relname;
     `;
 
-    expect(rows.length).toBe(3);
+    expect(rows.length).toBe(2);
 
     const salesRow = rows.find((r) => r.relname === 'sales_transactions');
     expect(salesRow).toBeDefined();
@@ -34,14 +34,5 @@ describe('Autovacuum tuning verification (P6-04)', () => {
     expect(auditOpts).toContain('autovacuum_vacuum_threshold=1000');
     expect(auditOpts).toContain('autovacuum_analyze_scale_factor=0.02');
     expect(auditOpts).toContain('autovacuum_analyze_threshold=500');
-
-    const devRow = rows.find((r) => r.relname === 'external_devices');
-    expect(devRow).toBeDefined();
-    expect(devRow!.reloptions).not.toBeNull();
-    const devOpts = devRow!.reloptions!.join(',');
-    expect(devOpts).toContain('autovacuum_vacuum_scale_factor=0.05');
-    expect(devOpts).toContain('autovacuum_vacuum_threshold=100');
-    expect(devOpts).toContain('autovacuum_analyze_scale_factor=0.02');
-    expect(devOpts).toContain('autovacuum_analyze_threshold=50');
   });
 });

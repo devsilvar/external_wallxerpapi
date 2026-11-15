@@ -19,16 +19,16 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // Seed or retrieve the persistent sandbox tenant
     sandbox = await seedSandboxTenant();
     expect(sandbox.businessId).toBeDefined();
-    expect(sandbox.deviceToken).toBeDefined();
+    expect(sandbox.apiKey).toBeDefined();
   });
 
-  it('authenticates against GET /me with the sandbox test token', async () => {
+  it('authenticates against GET /accounts/:accountId with the sandbox platform key', async () => {
     const res = await request(app)
-      .get('/api/external/v1/me')
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .get(`/api/external/v1/accounts/${sandbox.externalCustomerId}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.data.accountId).toBe(sandbox.businessId);
+    expect(res.body.data.id).toBe(sandbox.businessId);
     expect(res.body.data.merchantId).toBe(sandbox.merchantId);
     expect(res.body.data.isActive).toBe(true);
   });
@@ -37,7 +37,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 1. Create a customer
     const custRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/customers`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         externalId: `cust-${testBatch}`,
         name: 'Sandbox Customer',
@@ -53,7 +53,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     const saleRef = `SALE-${testBatch}`;
     const saleRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/sales`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         referenceId: saleRef,
         amount: '15000.00',
@@ -76,7 +76,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // Idempotent replay with identical payload returns 200 OK
     const saleReplay = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/sales`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         referenceId: saleRef,
         amount: '15000.00',
@@ -98,7 +98,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 3. Ingest an expense
     const expRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/expenses`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         externalRef: `EXP-${testBatch}`,
         category: 'office_supplies',
@@ -116,7 +116,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 4. Create, send, and mark-paid an invoice
     const invRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/invoices`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         externalRef: `INV-${testBatch}`,
         customerId,
@@ -143,14 +143,14 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // Send the invoice -> transitions to 'sent'
     const sendRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/invoices/${invoiceId}/send`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
     expect(sendRes.status).toBe(200);
     expect(sendRes.body.data.status).toBe('sent');
 
     // Mark paid -> creates linked sale
     const payRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/invoices/${invoiceId}/mark-paid`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`)
+      .set('Authorization', `Bearer ${sandbox.apiKey}`)
       .send({
         paymentDate: '2026-11-15',
         paymentMethod: 'bank_transfer',
@@ -162,14 +162,14 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 5. Fetch commercial PDF
     const pdfRes = await request(app)
       .get(`/api/external/v1/accounts/${sandbox.businessId}/invoices/${invoiceId}/pdf`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
     expect(pdfRes.status).toBe(200);
     expect(pdfRes.headers['content-type']).toBe('application/pdf');
 
     // 6. Public capability link
     const linkRes = await request(app)
       .post(`/api/external/v1/accounts/${sandbox.businessId}/invoices/${invoiceId}/pdf-link`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
     expect(linkRes.status).toBe(200);
     const publicUrl = linkRes.body.data.pdfUrl;
 
@@ -181,7 +181,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 7. Polling sync query with updatedSince
     const syncRes = await request(app)
       .get(`/api/external/v1/accounts/${sandbox.businessId}/sales?updatedSince=2026-01-01T00:00:00.000Z&limit=10`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
     expect(syncRes.status).toBe(200);
     expect(syncRes.body.data.length).toBeGreaterThanOrEqual(1);
     expect(syncRes.body.page).toBeDefined();
@@ -189,7 +189,7 @@ describe('Sandbox tenant on staging (tests/integration/sandbox.test.ts)', () => 
     // 8. Deletions endpoint check
     const delRes = await request(app)
       .get(`/api/external/v1/accounts/${sandbox.businessId}/deletions?since=2026-01-01T00:00:00.000Z`)
-      .set('Authorization', `Bearer ${sandbox.deviceToken}`);
+      .set('Authorization', `Bearer ${sandbox.apiKey}`);
     expect(delRes.status).toBe(200);
     expect(Array.isArray(delRes.body.data)).toBe(true);
   });
