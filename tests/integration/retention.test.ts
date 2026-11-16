@@ -116,10 +116,10 @@ describe('Retention jobs for tombstones and audit logs (tests/integration/retent
       data: {
         platformId,
         businessId,
-        actor: 'device',
-        action: 'device.activated',
-        resourceType: 'device',
-        resourceId: `dev-expired-${testId}`,
+        actor: 'api_key',
+        action: 'api_key.rotated',
+        resourceType: 'api_key',
+        resourceId: `key-expired-${testId}`,
         createdAt: past730Days,
       },
     });
@@ -128,10 +128,10 @@ describe('Retention jobs for tombstones and audit logs (tests/integration/retent
       data: {
         platformId,
         businessId,
-        actor: 'device',
-        action: 'device.activated',
-        resourceType: 'device',
-        resourceId: `dev-active-${testId}`,
+        actor: 'api_key',
+        action: 'api_key.rotated',
+        resourceType: 'api_key',
+        resourceId: `key-active-${testId}`,
         createdAt: inside730Days,
       },
     });

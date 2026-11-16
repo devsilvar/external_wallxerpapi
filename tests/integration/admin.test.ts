@@ -37,7 +37,7 @@ describe('Admin surface (Phase 8: tests/integration/admin.test.ts)', () => {
   let ipRestrictedAdminId: string;
 
   beforeAll(async () => {
-    // 1. Seed user, platform, business and device for target tests
+    // 1. Seed user, platform and business for target tests
     const user = await prisma.user.create({
       data: {
         email: `${testId}-owner@example.com`,

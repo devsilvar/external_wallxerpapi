@@ -9,7 +9,7 @@ interface Bucket {
 
 export interface RateLimiterOptions {
   /**
-   * Function to extract the rate limit key from the request (e.g. IP or device token).
+   * Function to extract the rate limit key from the request (e.g. IP or API key hash).
    * Returning undefined skips rate limiting for this request.
    */
   keyGenerator: (req: Request) => string | undefined;

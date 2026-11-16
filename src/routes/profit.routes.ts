@@ -36,6 +36,11 @@ profitRouter.get('/profit-summary', async (req: Request, res: Response) => {
     throw new AppError(400, 'INVALID_PARAMETER', 'startDate cannot be after endDate');
   }
 
+ // A single-sided range must also be bounded: default the missing side so a
+ // caller cannot pull the whole ledger with `?startDate=2000-01-01`.
+ if (from && !to) to = new Date();
+ if (to && !from) from = new Date(to.getTime() - 366 * 24 * 60 * 60 * 1000);
+
   if (from && to) {
     const diffDays = Math.ceil((to.getTime() - from.getTime()) / (1000 * 3600 * 24));
     if (diffDays > 366) {

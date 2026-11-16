@@ -30,7 +30,7 @@ export function getCallerIp(req: Request): string {
 /**
  * Middleware authenticating operator admin requests.
  * Enforces token validity, non-revocation, expiration date, and optional IP allowlist.
- * Explicitly refuses device tokens.
+ * Only administrator tokens are accepted; partner API keys are refused.
  */
 export async function authenticateAdmin(
   req: Request,
@@ -51,7 +51,7 @@ export async function authenticateAdmin(
   const admin = await findAdminByTokenHash(tokenHash);
 
   if (!admin) {
-    // Fails for invalid admin tokens and any merchant device tokens
+    // Fails for invalid admin tokens and any partner API key
     throw new AppError(401, 'TOKEN_INVALID', 'Invalid administrator token');
   }
 

@@ -160,7 +160,26 @@ describe('Profit Summary API (tests/integration/profit-summary.test.ts)', () => 
     expect(res.body.error.code).toBe('DATE_RANGE_TOO_LARGE');
   });
 
-  it('rejects malformed date parameter with 400 INVALID_PARAMETER', async () => {
+  it('rejects a single-sided startDate older than 366 days with 400 DATE_RANGE_TOO_LARGE', async () => {
+ const res = await request(app)
+ .get(`/api/external/v1/accounts/${customerId}/profit-summary?startDate=2020-01-01`)
+ .set('Authorization', `Bearer ${apiKey}`);
+
+ expect(res.status).toBe(400);
+ expect(res.body.error.code).toBe('DATE_RANGE_TOO_LARGE');
+});
+
+it('defaults a single-sided endDate to a bounded 366-day window', async () => {
+ const res = await request(app)
+ .get(`/api/external/v1/accounts/${customerId}/profit-summary?endDate=2026-06-10`)
+ .set('Authorization', `Bearer ${apiKey}`);
+
+ expect(res.status).toBe(200);
+ expect(res.body.data.period.from).toBe('2025-06-09');
+ expect(res.body.data.period.to).toBe('2026-06-10');
+});
+
+it('rejects malformed date parameter with 400 INVALID_PARAMETER', async () => {
     const res = await request(app)
       .get(`/api/external/v1/accounts/${customerId}/profit-summary?startDate=not-a-date`)
       .set('Authorization', `Bearer ${apiKey}`);

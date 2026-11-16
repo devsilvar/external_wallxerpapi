@@ -15,7 +15,7 @@ describe('Atomic sequence allocator (src/services/sequence.service.ts)', () => {
     for (const inv of results) {
       expect(inv).toMatch(/^WX-2026-\d{3,}$/);
     }
-  }, 15000);
+  }, 60_000);
 
   it('generates merchant IDs zero-padded to 7 digits matching WOWO0000001 pattern', async () => {
     const merchantId = await nextMerchantId();

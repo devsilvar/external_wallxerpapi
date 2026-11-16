@@ -1136,7 +1136,6 @@ export interface CreateAuditLogInput {
   action: string;
   actor: string;
   platformId?: string | null;
-  externalDeviceId?: string | null;
   resourceType?: string | null;
   resourceId?: string | null;
   oldData?: Prisma.InputJsonValue;
@@ -1155,7 +1154,6 @@ export async function createAuditLog(
       action: data.action,
       actor: data.actor,
       platformId: data.platformId ?? null,
-      externalDeviceId: data.externalDeviceId ?? null,
       resourceType: data.resourceType ?? null,
       resourceId: data.resourceId ?? null,
       oldData: data.oldData ?? undefined,

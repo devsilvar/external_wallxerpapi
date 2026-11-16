@@ -5,7 +5,6 @@ import { logger } from '../lib/logger.js';
 export const SANDBOX_PLATFORM_NAME = 'Wowo Sandbox Platform';
 export const SANDBOX_EXTERNAL_CUSTOMER_ID = 'WOWO-SANDBOX-MERCHANT-01';
 export const SANDBOX_API_KEY = 'wowo_sandbox_key_7a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a';
-export const SANDBOX_TEST_TOKEN = SANDBOX_API_KEY; // Backward-compat alias
 
 export interface SandboxSeedResult {
   platformId: string;
@@ -13,8 +12,7 @@ export interface SandboxSeedResult {
   merchantId: string;
   externalCustomerId: string;
   apiKey: string;
-  deviceToken: string; // Backward-compat alias for tests
-  isNew: boolean;
+   isNew: boolean;
 }
 
 /**
@@ -104,7 +102,6 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
     merchantId: business.merchantId ?? 'WOWO-SBX-0001',
     externalCustomerId: business.externalCustomerId,
     apiKey: SANDBOX_API_KEY,
-    deviceToken: SANDBOX_API_KEY,
-    isNew,
+       isNew,
   };
 }

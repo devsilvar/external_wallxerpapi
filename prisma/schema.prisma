@@ -139,16 +139,6 @@ model User {
   regulatoryTermsAcceptedAt DateTime? @map("regulatory_terms_accepted_at")
   regulatoryTermsVersion    String?   @map("regulatory_terms_version")
 
-  settlementBankCode      String?   @map("settlement_bank_code")
-  settlementBankName      String?   @map("settlement_bank_name")
-  settlementAccountNumber String?   @map("settlement_account_number")
-  settlementAccountName   String?   @map("settlement_account_name")
-  settlementConnectedAt   DateTime? @map("settlement_connected_at")
-  autoPayoutEnabled       Boolean   @default(false) @map("auto_payout_enabled")
-
-  paystackCustomerCode String?   @map("paystack_customer_code")
-  virtualAccountNumber String?   @map("virtual_account_number")
-  virtualAccountBank   String?   @map("virtual_account_bank")
   primaryBusinessId    String?   @map("primary_business_id")
   primaryBusiness      Business? @relation("PrimaryBusiness", fields: [primaryBusinessId], references: [id], onDelete: SetNull)
 
@@ -270,17 +260,12 @@ model SalesTransaction {
   updatedAt           DateTime          @updatedAt @map("updated_at")
   createdBy           String?           @map("created_by")
   metadata            Json?
-  settledViaSplit     Boolean           @default(false) @map("settled_via_split")
-  splitPct            Decimal?          @map("split_pct") @db.Decimal(5, 2)
-  platformRetained    Decimal?          @map("platform_retained") @db.Decimal(15, 2)
   needsVerification   Boolean           @default(false) @map("needs_verification")
   verifiedAt          DateTime?         @map("verified_at")
   verifiedBy          String?           @map("verified_by")
   customerHint        String?           @map("customer_hint")
   finalClassification String?           @map("final_classification")
   isTaxable           Boolean           @default(true) @map("is_taxable")
-  dvaOrigin           Boolean           @default(false) @map("dva_origin")
-  settledAt           DateTime?         @map("settled_at")
 
   invoice    Invoice?
   customerId String?        @map("customer_id")
@@ -294,7 +279,7 @@ model SalesTransaction {
   @@index([referenceId])
   @@index([source])
   @@index([customerId])
-  @@index([needsVerification], map: "idx_sales_needs_verification")
+  @@index([businessId, needsVerification], map: "idx_sales_needs_verification")
   @@index([needsVerification, transactionDate(sort: Desc)], map: "idx_sales_unverified_queue")
   @@index([businessId, status, isTaxable, transactionDate, amount], map: "idx_sales_tax_calc")
   @@map("sales_transactions")
@@ -412,7 +397,6 @@ model InvoiceLine {
 model AuditLog {
   id               String   @id @default(uuid())
   platformId       String?  @map("platform_id")
-  externalDeviceId String?  @map("external_device_id")
   actor            String
   userId           String?  @map("user_id")
   businessId       String?  @map("business_id")

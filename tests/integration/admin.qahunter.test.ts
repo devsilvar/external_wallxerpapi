@@ -13,7 +13,6 @@
  *  F. Usage endpoint shape assertions
  *  G. IP allowlist edge cases (IPv4-mapped IPv6, multi-IP, XFF)
  *  H. Suspension state machine — idempotency
- *  I. Device revocation guards (already-revoked, wrong account)
  *  J. Issue-code adversarial (non-existent account, Crockford alphabet, double-call)
  *  K. Zod strict-mode extra-field rejection
  */
@@ -25,15 +24,6 @@ import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
 import { createAdmin } from '../../src/db/admin.repo.js';
 import { generateToken, hashToken } from '../../src/lib/token.js';
-
-// ─────────────────────────────────────────────────────────────────
-// Crockford base32 alphabet (no I, L, O, U)
-// ─────────────────────────────────────────────────────────────────
-const CROCKFORD_ALPHABET = new Set('0123456789ABCDEFGHJKMNPQRSTVWXYZ');
-
-function isCrockford(s: string): boolean {
-  return [...s.toUpperCase()].every((c) => CROCKFORD_ALPHABET.has(c));
-}
 
 // ─────────────────────────────────────────────────────────────────
 // Null UUID constant
@@ -444,20 +434,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       expect(res.status).toBe(404);
     });
 
-    it('C-04: GET /admin/accounts/00000000-0000-0000-0000-000000000000/devices → 404', async () => {
-      const res = await request(app)
-        .get(`/api/external/v1/admin/accounts/${NULL_UUID}/devices`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-
-    it('C-05: POST /admin/accounts/00000000-0000-0000-0000-000000000000/issue-code → 404', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${NULL_UUID}/issue-code`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
-
     it('C-06: PATCH /admin/platforms/00000000-0000-0000-0000-000000000000 → 404', async () => {
       const res = await request(app)
         .patch(`/api/external/v1/admin/platforms/${NULL_UUID}`)
@@ -466,12 +442,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       expect(res.status).toBe(404);
     });
 
-    it('C-07: POST /admin/accounts/:id/devices/null-uuid/revoke → 404', async () => {
-      const res = await request(app)
-        .post(`/api/external/v1/admin/accounts/${businessId}/devices/${NULL_UUID}/revoke`)
-        .set('Authorization', `Bearer ${validAdminToken}`);
-      expect(res.status).toBe(404);
-    });
   });
 
   // =================================================================
@@ -612,7 +582,7 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
       const since = new Date(Date.now() - 365 * 86_400_000).toISOString();
       const res = await request(app)
         .get(
-          `/api/external/v1/admin/audit-logs?actor=system&action=DEVICE_REVOKED&businessId=${businessId}&platformId=${platformId}&since=${encodeURIComponent(since)}&limit=10`
+          `/api/external/v1/admin/audit-logs?actor=system&action=SALE_CREATED&businessId=${businessId}&platformId=${platformId}&since=${encodeURIComponent(since)}&limit=10`
         )
         .set('Authorization', `Bearer ${validAdminToken}`);
       expect(res.status).toBe(200);
@@ -662,7 +632,6 @@ describe('QA Hunter — Admin Surface Adversarial Tests', () => {
             sales: number;
             invoices: number;
             expenses: number;
-            devices: number;
           };
           adminCredentials: {
             warnings: string[];

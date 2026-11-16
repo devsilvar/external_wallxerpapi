@@ -82,7 +82,7 @@ export async function listAdmins(db: DbClient = prisma): Promise<ExternalAdmin[]
 }
 
 /**
- * Lists all partner platforms with device and merchant account counts.
+ * Lists all partner platforms with merchant account counts.
  */
 export async function listPlatformsAdmin(db: DbClient = prisma) {
   const platforms = await db.platform.findMany({

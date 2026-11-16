@@ -4,8 +4,7 @@ import {
   SANDBOX_PLATFORM_NAME,
   SANDBOX_EXTERNAL_CUSTOMER_ID,
   SANDBOX_API_KEY,
-  SANDBOX_TEST_TOKEN,
-} from '../db/sandbox.repo.js';
+ } from '../db/sandbox.repo.js';
 
 export {
   seedSandboxTenant,
@@ -13,8 +12,7 @@ export {
   SANDBOX_PLATFORM_NAME,
   SANDBOX_EXTERNAL_CUSTOMER_ID,
   SANDBOX_API_KEY,
-  SANDBOX_TEST_TOKEN,
-};
+ };
 
 // Allow direct CLI execution: `tsx src/cli/seed-sandbox.ts`
 if (process.argv[1]?.endsWith('seed-sandbox.ts')) {

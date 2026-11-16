@@ -57,7 +57,7 @@ adminRouter.get('/accounts', async (req: Request, res: Response) => {
 
 /**
  * GET /admin/accounts/:id
- * Gets detailed merchant account info including live counts and devices.
+ * Gets detailed merchant account info including live counts.
  */
 adminRouter.get('/accounts/:id', async (req: Request, res: Response) => {
   const accountId = req.params['id'] as string;

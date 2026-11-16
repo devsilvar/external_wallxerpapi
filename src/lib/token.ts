@@ -1,8 +1,5 @@
 import crypto from 'node:crypto';
 
-// Crockford's Base32 alphabet: 32 characters, excludes I, L, O, U to prevent transcription ambiguity.
-const CROCKFORD_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-
 /**
  * Generates a 32-byte cryptographically secure random token, base64url encoded.
  * Raw token must be shown to the client once and never logged.
@@ -39,22 +36,4 @@ export function verifyToken(raw: string, storedHash: string): boolean {
   }
 
   return crypto.timingSafeEqual(computedBuffer, storedBuffer);
-}
-
-/**
- * Generates a 10-character Crockford Base32 activation code (50 bits of entropy).
- * Excludes ambiguous characters (I, L, O, U).
- */
-export function generateActivationCode(): string {
-  const bytes = crypto.randomBytes(10);
-  let code = '';
-  for (let i = 0; i < 10; i++) {
-    const byte = bytes[i];
-    if (byte === undefined) {
-      code += CROCKFORD_ALPHABET[0];
-    } else {
-      code += CROCKFORD_ALPHABET[byte % 32];
-    }
-  }
-  return code;
 }
