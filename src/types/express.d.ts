@@ -26,6 +26,27 @@ declare global {
         name: string;
         role: string;
       };
+
+      /** Authenticated developer portal session */
+      developer?: {
+        userId: string;
+        platformId: string | null;
+        sessionId: string;
+        user: {
+          id: string;
+          email: string | null;
+          fullName: string | null;
+          isVerified: boolean;
+        };
+        platform?: {
+          id: string;
+          name: string;
+          approvalStatus: string;
+          isActive: boolean;
+          suspendedAt: Date | null;
+          suspendedReason: string | null;
+        } | null;
+      };
     }
   }
 }

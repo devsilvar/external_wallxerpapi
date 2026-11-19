@@ -3,6 +3,7 @@ import * as helmetNs from 'helmet';
 import type { Config } from './config.js';
 import { authenticatePartner } from './middleware/authenticatePartner.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { createCorsMiddleware } from './middleware/cors.js';
 import { requestLogger } from './middleware/logger.js';
 import { createRateLimiter, tokenKeyGenerator } from './middleware/rateLimit.js';
 import { requestId } from './middleware/requestId.js';
@@ -12,10 +13,12 @@ import { requirePlatformActive } from './middleware/requirePlatformActive.js';
 import { resolveAccountByPartner } from './middleware/resolveAccountByPartner.js';
 import { accountsRouter, onboardingHandler } from './routes/accounts.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
+import { portalAuthRouter } from './routes/portal-auth.routes.js';
 import { customersRouter } from './routes/customers.routes.js';
 import { deletionsRouter } from './routes/deletions.routes.js';
 import { expensesRouter } from './routes/expenses.routes.js';
 import { healthRouter } from './routes/health.routes.js';
+import { createMetaRouter } from './routes/meta.routes.js';
 import { docsRouter } from './routes/docs.routes.js';
 import { invoicesRouter } from './routes/invoices.routes.js';
 import { profitRouter } from './routes/profit.routes.js';
@@ -40,11 +43,15 @@ export function createApp(config: Config): Express {
   app.use(requestId);
   app.use(requestLogger);
 
+  // CORS allowlist before body parsing: preflight must be answered immediately
+  app.use(createCorsMiddleware(config.EXTERNAL_CORS_ORIGINS));
+
   // 1 MB payload limit
   app.use(express.json({ limit: '1mb' }));
 
-  // Ahead of the kill switch: a disabled API must still answer health probe and docs
+  // Ahead of the kill switch: a disabled API must still answer health probe, docs, and meta
   app.use(healthRouter);
+  app.use(createMetaRouter(config));
   app.use(docsRouter);
 
   // Kill-switch layer 1 (503 API_DISABLED)
@@ -60,6 +67,10 @@ export function createApp(config: Config): Express {
 
   // Admin surface routes (/admin/*)
   v1Router.use('/admin', adminRouter);
+
+  // Developer portal routes (/portal/*)
+  v1Router.use('/portal', portalAuthRouter);
+  app.use('/portal', portalAuthRouter);
 
   // Partner customer onboarding endpoint: POST /api/external/v1/accounts
   // Authenticated by partner Platform API Key
