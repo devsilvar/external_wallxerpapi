@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
+  PORT: z.coerce.number().int().positive().default(5000),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
@@ -22,6 +22,19 @@ const EnvSchema = z.object({
   EXTERNAL_AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(730),
 
   PLATFORM_FLAT_FEE_NGN: z.coerce.number().nonnegative().default(0),
+
+  EXTERNAL_CORS_ORIGINS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean)
+    ),
+
+  EXTERNAL_DOCS_URL: z
+    .preprocess((val) => (val === '' || val === undefined ? undefined : val), z.string().url().optional()),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

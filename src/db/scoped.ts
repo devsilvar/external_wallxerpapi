@@ -1145,7 +1145,7 @@ export interface CreateAuditLogInput {
 }
 
 export async function createAuditLog(
-  businessId: string,
+  businessId: string | null,
   data: CreateAuditLogInput
 ): Promise<AuditLog> {
   return prisma.auditLog.create({

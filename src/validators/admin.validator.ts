@@ -39,3 +39,14 @@ export const AdminAuditLogsQuerySchema = z
     cursor: z.string().uuid().optional(),
   })
   .strict();
+
+export const CreateAdminSchema = z
+  .object({
+    name: z.string().min(1, 'Name is required').max(80, 'Name must not exceed 80 characters'),
+    role: z.enum(['admin', 'readonly']).default('admin'),
+    expiresAt: z.string().datetime({ message: 'Must be an ISO 8601 datetime' }).optional().nullable(),
+    allowedIps: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type CreateAdminInput = z.infer<typeof CreateAdminSchema>;

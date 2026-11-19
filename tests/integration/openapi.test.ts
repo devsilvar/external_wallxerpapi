@@ -49,6 +49,7 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     // Assert partner & merchant routes are present
     const paths = Object.keys(spec.paths);
     expect(paths).toContain('/health');
+    expect(paths).toContain('/meta');
     expect(paths).toContain('/api/external/v1/accounts');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}');
     expect(paths).toContain('/api/external/v1/accounts/{accountId}/profit-summary');
@@ -66,10 +67,25 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     expect(paths).toContain('/api/external/v1/admin/accounts/{id}');
     expect(paths).toContain('/api/external/v1/admin/audit-logs');
     expect(paths).toContain('/api/external/v1/admin/usage');
+    expect(paths).toContain('/api/external/v1/admin/admins');
+    expect(paths).toContain('/api/external/v1/admin/admins/{id}');
 
     // Assert security schemes
     expect(spec.components.securitySchemes.PlatformBearerAuth).toBeDefined();
     expect(spec.components.securitySchemes.AdminBearerAuth).toBeDefined();
+
+    // Write committed snapshot for externalApiFrontend
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const snapshotDir = path.resolve(__dirname, '../../../externalApiFrontend/src/generated');
+    if (fs.existsSync(path.dirname(snapshotDir))) {
+      fs.mkdirSync(snapshotDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(snapshotDir, 'openapi.snapshot.json'),
+        JSON.stringify(spec, null, 2),
+        'utf8',
+      );
+    }
   });
 
   it('GET /swagger.json returns identical specification payload to /openapi.json', async () => {

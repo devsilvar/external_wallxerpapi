@@ -41,6 +41,30 @@ export async function findAdminByTokenHash(
 }
 
 /**
+ * Finds an admin record by ID.
+ */
+export async function findAdminById(
+  adminId: string,
+  db: DbClient = prisma
+): Promise<ExternalAdmin | null> {
+  return db.externalAdmin.findUnique({
+    where: { id: adminId },
+  });
+}
+
+/**
+ * Finds a platform by ID.
+ */
+export async function findPlatformById(
+  platformId: string,
+  db: DbClient = prisma
+) {
+  return db.platform.findUnique({
+    where: { id: platformId },
+  });
+}
+
+/**
  * Updates an admin's lastUsedAt timestamp asynchronously.
  */
 export async function updateAdminLastUsed(
@@ -239,7 +263,7 @@ export async function getAccountDetailAdmin(accountId: string, db: DbClient = pr
   }
 
   // Live counts across entity tables and relations
-  const [platform, salesCount, invoicesCount, expensesCount, customersCount] =
+  const [platform, sales, invoices, expenses, customers] =
     await Promise.all([
       db.platform.findUnique({
         where: { id: business.platformId },
@@ -264,11 +288,11 @@ export async function getAccountDetailAdmin(accountId: string, db: DbClient = pr
     city: business.city,
     state: business.state,
     isActive: business.isActive,
-    stats: {
-      salesCount,
-      invoicesCount,
-      expensesCount,
-      customersCount,
+    counts: {
+      sales,
+      invoices,
+      expenses,
+      customers,
     },
     createdAt: business.createdAt.toISOString(),
     updatedAt: business.updatedAt.toISOString(),
@@ -386,12 +410,11 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
       active: activeAccounts,
     },
     entities: {
-      sales: totalSales,
-      invoices: totalInvoices,
-      expenses: totalExpenses,
+      sales: { count: totalSales },
+      invoices: { count: totalInvoices },
+      expenses: { count: totalExpenses },
     },
     adminCredentials: {
-      activeTokensCount: adminTokens.length,
       warnings,
       tokens: adminTokens.map((a) => ({
         id: a.id,
@@ -400,9 +423,7 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
         hasExpiry: a.expiresAt !== null,
         expiresAt: a.expiresAt?.toISOString() ?? null,
         hasIpAllowlist: a.allowedIps.length > 0,
-        allowedIpsCount: a.allowedIps.length,
         lastUsedAt: a.lastUsedAt?.toISOString() ?? null,
-        createdAt: a.createdAt.toISOString(),
       })),
     },
   };

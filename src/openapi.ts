@@ -341,6 +341,38 @@ Production integration surface for POS partners, accounting integrations, and ad
             },
           },
         },
+        AdminCredential: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            name: { type: 'string', example: 'backend-admin-proxy' },
+            role: { type: 'string', enum: ['admin', 'readonly'], example: 'admin' },
+            createdAt: { type: 'string', format: 'date-time' },
+            lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
+            expiresAt: { type: 'string', format: 'date-time', nullable: true },
+            allowedIpsCount: { type: 'integer', example: 0 },
+            revokedAt: { type: 'string', format: 'date-time', nullable: true },
+          },
+          required: ['id', 'name', 'role', 'createdAt', 'allowedIpsCount'],
+        },
+        CreateAdminInput: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', minLength: 1, maxLength: 80, example: 'operator-alice' },
+            role: { type: 'string', enum: ['admin', 'readonly'], default: 'admin' },
+            expiresAt: { type: 'string', format: 'date-time', nullable: true },
+            allowedIps: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['name'],
+        },
+        CreatedAdminResponse: {
+          type: 'object',
+          properties: {
+            admin: { $ref: '#/components/schemas/AdminCredential' },
+            rawToken: { type: 'string', example: 'ext_admin_live_abc123...' },
+          },
+          required: ['admin', 'rawToken'],
+        },
       },
     },
     paths: {
@@ -363,6 +395,38 @@ Production integration surface for POS partners, accounting integrations, and ad
                       status: { type: 'string', example: 'ok' },
                       timestamp: { type: 'string', format: 'date-time' },
                     },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/meta': {
+        get: {
+          tags: ['System & Health'],
+          summary: 'Service metadata',
+          description: 'Unauthenticated endpoint returning service version, environment, OpenAPI spec location, and documentation URL.',
+          responses: {
+            '200': {
+              description: 'Service metadata',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'object',
+                        properties: {
+                          version: { type: 'string', example: '0.1.0' },
+                          environment: { type: 'string', example: 'production' },
+                          specUrl: { type: 'string', example: '/openapi.json' },
+                          docsUrl: { type: 'string', nullable: true, example: 'https://docs.example.com/external-apis' },
+                        },
+                        required: ['version', 'environment', 'specUrl'],
+                      },
+                    },
+                    required: ['data'],
                   },
                 },
               },
@@ -1402,6 +1466,110 @@ Production integration surface for POS partners, accounting integrations, and ad
                   },
                 },
               },
+            },
+          },
+        },
+      },
+      // -------------------------------------------------------------
+      // ADMIN - CREDENTIAL MANAGEMENT
+      // -------------------------------------------------------------
+      '/api/external/v1/admin/admins': {
+        get: {
+          tags: ['Admin - Credentials'],
+          summary: 'List administrator credentials',
+          description: 'Returns all configured administrator tokens with usage and expiration metadata. Secrets and hashes are omitted.',
+          security: [{ AdminBearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'List of admin credentials',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/AdminCredential' },
+                      },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          tags: ['Admin - Credentials'],
+          summary: 'Create administrator credential',
+          description: 'Mints a new administrator token. The raw bearer token is returned in the response body EXACTLY ONCE.',
+          security: [{ AdminBearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/CreateAdminInput' },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Administrator credential created',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/CreatedAdminResponse' },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/external/v1/admin/admins/{id}': {
+        delete: {
+          tags: ['Admin - Credentials'],
+          summary: 'Revoke administrator credential',
+          description: 'Immediately revokes an administrator token. Future requests using this token will be rejected with 401.',
+          security: [{ AdminBearerAuth: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+              description: 'The admin record UUID to revoke',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Administrator credential revoked',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          name: { type: 'string' },
+                          revokedAt: { type: 'string', format: 'date-time' },
+                        },
+                        required: ['id', 'name', 'revokedAt'],
+                      },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Administrator credential not found',
             },
           },
         },

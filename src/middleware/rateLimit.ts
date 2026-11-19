@@ -80,6 +80,17 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
 
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1;
+      const remaining = Math.floor(bucket.tokens);
+      const missingTokens = effectiveLimit - bucket.tokens;
+      const secondsUntilFull = Math.max(
+        0,
+        Math.ceil((missingTokens / effectiveLimit) * (windowMs / 1000))
+      );
+
+      res.setHeader('RateLimit-Limit', String(effectiveLimit));
+      res.setHeader('RateLimit-Remaining', String(remaining));
+      res.setHeader('RateLimit-Reset', String(secondsUntilFull));
+
       return next();
     }
 

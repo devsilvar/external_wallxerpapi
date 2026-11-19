@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { findAdminByTokenHash, updateAdminLastUsed } from '../db/admin.repo.js';
 import { AppError } from '../lib/errors.js';
@@ -51,7 +52,7 @@ export async function authenticateAdmin(
   const admin = await findAdminByTokenHash(tokenHash);
 
   if (!admin) {
-    // Fails for invalid admin tokens and any partner API key
+    // Fails for invalid admin tokens, service keys, and any partner API key
     throw new AppError(401, 'TOKEN_INVALID', 'Invalid administrator token');
   }
 
@@ -88,3 +89,28 @@ export async function authenticateAdmin(
 
   next();
 }
+
+/**
+ * Guard enforcing write permissions for admin operators.
+ * Rejects any mutating request (POST, PUT, PATCH, DELETE) if req.admin.role === 'readonly'.
+ */
+export function requireAdminWrite(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): void {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  if (req.admin?.role?.toLowerCase() === 'readonly') {
+    return next(
+      new AppError(
+        403,
+        'READONLY_ADMIN',
+        'Readonly administrators cannot perform mutating operations'
+      )
+    );
+  }
+  return next();
+}
+

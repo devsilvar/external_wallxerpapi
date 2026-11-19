@@ -88,4 +88,33 @@ describe('Rate limiter middleware (src/middleware/rateLimit.ts)', () => {
     const bAllowed = await request(app).get('/test').set('x-client-id', 'client-b');
     expect(bAllowed.status).toBe(200);
   });
+
+  it('emits RateLimit-Limit, RateLimit-Remaining, and RateLimit-Reset headers on success', async () => {
+    const limit = 10;
+    const app = express();
+    app.use(
+      createRateLimiter({
+        limit,
+        instanceCount: 1,
+        windowMs: 60_000,
+        keyGenerator: () => 'header-check-client',
+      })
+    );
+    app.get('/test', (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.use(errorHandler);
+
+    const first = await request(app).get('/test');
+    expect(first.status).toBe(200);
+    expect(first.headers['ratelimit-limit']).toBe('10');
+    expect(first.headers['ratelimit-remaining']).toBe('9');
+    expect(Number(first.headers['ratelimit-reset'])).toBeGreaterThanOrEqual(1);
+
+    const second = await request(app).get('/test');
+    expect(second.status).toBe(200);
+    expect(second.headers['ratelimit-limit']).toBe('10');
+    expect(second.headers['ratelimit-remaining']).toBe('8');
+    expect(Number(second.headers['ratelimit-reset'])).toBeGreaterThanOrEqual(1);
+  });
 });

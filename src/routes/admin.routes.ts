@@ -1,17 +1,22 @@
 import { Router, type Request, type Response } from 'express';
-import { authenticateAdmin } from '../middleware/adminAuth.js';
+import { authenticateAdmin, requireAdminWrite } from '../middleware/adminAuth.js';
+import { portalAdminRouter } from './portal-admin.routes.js';
 import {
+  createAdminTokenAdmin,
   fetchAccountDetailAdmin,
   fetchAccountsAdmin,
+  fetchAdminsAdmin,
   fetchAuditLogsAdmin,
   fetchPlatformsAdmin,
   fetchUsageStatsAdmin,
   patchAccountAdmin,
   patchPlatformAdmin,
+  revokeAdminTokenAdmin,
 } from '../services/admin.service.js';
 import {
   AdminAuditLogsQuerySchema,
   AdminListAccountsQuerySchema,
+  CreateAdminSchema,
   UpdateAccountSchema,
   UpdatePlatformSchema,
 } from '../validators/admin.validator.js';
@@ -20,6 +25,9 @@ export const adminRouter = Router();
 
 // Apply admin authentication to all /admin/* routes
 adminRouter.use(authenticateAdmin);
+
+// Mount developer management routes
+adminRouter.use('/', portalAdminRouter);
 
 /**
  * GET /admin/platforms
@@ -34,11 +42,11 @@ adminRouter.get('/platforms', async (_req: Request, res: Response) => {
  * PATCH /admin/platforms/:id
  * Updates platform properties (suspend/resume, fee, subscriptionExpiresAt).
  */
-adminRouter.patch('/platforms/:id', async (req: Request, res: Response) => {
+adminRouter.patch('/platforms/:id', requireAdminWrite, async (req: Request, res: Response) => {
   const platformId = req.params['id'] as string;
   const input = UpdatePlatformSchema.parse(req.body);
 
-  const updated = await patchPlatformAdmin(platformId, input);
+  const updated = await patchPlatformAdmin(platformId, input, req.admin?.name);
   res.status(200).json({ data: updated });
 });
 
@@ -69,11 +77,11 @@ adminRouter.get('/accounts/:id', async (req: Request, res: Response) => {
  * PATCH /admin/accounts/:id
  * Suspends or resumes a merchant account.
  */
-adminRouter.patch('/accounts/:id', async (req: Request, res: Response) => {
+adminRouter.patch('/accounts/:id', requireAdminWrite, async (req: Request, res: Response) => {
   const accountId = req.params['id'] as string;
   const input = UpdateAccountSchema.parse(req.body);
 
-  const updated = await patchAccountAdmin(accountId, input);
+  const updated = await patchAccountAdmin(accountId, input, req.admin?.name);
   res.status(200).json({ data: updated });
 });
 
@@ -97,4 +105,35 @@ adminRouter.get('/audit-logs', async (req: Request, res: Response) => {
 adminRouter.get('/usage', async (_req: Request, res: Response) => {
   const usage = await fetchUsageStatsAdmin();
   res.status(200).json({ data: usage });
+});
+
+/**
+ * GET /admin/admins
+ * Lists all administrator tokens for credential posture auditing.
+ * Never includes raw tokens or token hashes.
+ */
+adminRouter.get('/admins', async (_req: Request, res: Response) => {
+  const admins = await fetchAdminsAdmin();
+  res.status(200).json({ data: admins });
+});
+
+/**
+ * POST /admin/admins
+ * Creates a new administrator credential.
+ * Reveals the raw bearer token EXACTLY ONCE in the response body.
+ */
+adminRouter.post('/admins', requireAdminWrite, async (req: Request, res: Response) => {
+  const input = CreateAdminSchema.parse(req.body);
+  const result = await createAdminTokenAdmin(input, req.admin?.name);
+  res.status(201).json({ data: result });
+});
+
+/**
+ * DELETE /admin/admins/:id
+ * Revokes an administrative credential immediately.
+ */
+adminRouter.delete('/admins/:id', requireAdminWrite, async (req: Request, res: Response) => {
+  const adminId = req.params['id'] as string;
+  const result = await revokeAdminTokenAdmin(adminId, req.admin?.name);
+  res.status(200).json({ data: result });
 });
