@@ -1,3 +1,4 @@
+import { prisma } from '../db/client.js';
 import {
   createPlatform,
   regeneratePlatformApiKey,
@@ -33,6 +34,16 @@ export async function issuePlatformWithApiKey(params: {
     flatFeeNgn: params.flatFeeNgn ?? null,
   });
 
+  await prisma.platformApiKey.create({
+    data: {
+      platformId: platform.id,
+      label: 'Initial CLI Key',
+      prefix: apiKeyPrefix,
+      keyHash: apiKeyHash,
+      createdByUserId: user.id,
+    },
+  });
+
   return {
     id: platform.id,
     name: platform.name,
@@ -46,6 +57,20 @@ export async function rotatePlatformApiKey(platformId: string): Promise<{ apiKey
   const apiKey = generateApiKey(prefix);
   const apiKeyHash = hashToken(apiKey);
   const apiKeyPrefix = apiKey.slice(0, 16);
+
+  await prisma.platformApiKey.updateMany({
+    where: { platformId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
+  await prisma.platformApiKey.create({
+    data: {
+      platformId,
+      label: 'Rotated CLI Key',
+      prefix: apiKeyPrefix,
+      keyHash: apiKeyHash,
+    },
+  });
 
   await regeneratePlatformApiKey(platformId, apiKeyHash, apiKeyPrefix);
 

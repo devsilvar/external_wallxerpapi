@@ -14,6 +14,8 @@ import { resolveAccountByPartner } from './middleware/resolveAccountByPartner.js
 import { accountsRouter, onboardingHandler } from './routes/accounts.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
 import { portalAuthRouter } from './routes/portal-auth.routes.js';
+import { portalKeysRouter } from './routes/portal-keys.routes.js';
+import { portalUsageRouter } from './routes/portal-usage.routes.js';
 import { customersRouter } from './routes/customers.routes.js';
 import { deletionsRouter } from './routes/deletions.routes.js';
 import { expensesRouter } from './routes/expenses.routes.js';
@@ -69,7 +71,11 @@ export function createApp(config: Config): Express {
   v1Router.use('/admin', adminRouter);
 
   // Developer portal routes (/portal/*)
+  v1Router.use('/portal/keys', portalKeysRouter);
+  v1Router.use('/portal/usage', portalUsageRouter);
   v1Router.use('/portal', portalAuthRouter);
+  app.use('/portal/keys', portalKeysRouter);
+  app.use('/portal/usage', portalUsageRouter);
   app.use('/portal', portalAuthRouter);
 
   // Partner customer onboarding endpoint: POST /api/external/v1/accounts

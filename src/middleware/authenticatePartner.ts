@@ -1,12 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
+import { findActiveApiKeyByHash, updateApiKeyLastUsed } from '../db/apiKey.repo.js';
 import { findPlatformByApiKeyHash, updatePlatformApiKeyLastUsed } from '../db/platform.repo.js';
 import { AppError } from '../lib/errors.js';
 import { hashToken } from '../lib/token.js';
 
 /**
  * Authenticates a request via server-to-server Platform API Key.
- * Reads Bearer token, hashes it with SHA-256, looks up Platform by apiKeyHash.
- * Updates apiKeyLastUsedAt asynchronously (fire-and-forget).
+ * Reads Bearer token, hashes it with SHA-256, looks up PlatformApiKey (or legacy Platform.apiKeyHash).
+ * Updates lastUsedAt asynchronously (fire-and-forget).
  */
 export async function authenticatePartner(
   req: Request,
@@ -26,7 +27,18 @@ export async function authenticatePartner(
   }
 
   const tokenHash = hashToken(rawToken);
-  const platform = await findPlatformByApiKeyHash(tokenHash);
+
+  // 1. Primary lookup: PlatformApiKey table (new per-key credential model)
+  const keyRecord = await findActiveApiKeyByHash(tokenHash);
+  let platform = keyRecord?.platform;
+
+  // 2. Legacy fallback: Platform.apiKeyHash
+  if (!platform) {
+    const legacyPlatform = await findPlatformByApiKeyHash(tokenHash);
+    if (legacyPlatform) {
+      platform = legacyPlatform;
+    }
+  }
 
   if (!platform) {
     return next(new AppError(401, 'TOKEN_INVALID', 'Invalid API key'));
@@ -50,6 +62,9 @@ export async function authenticatePartner(
   };
 
   // Fire-and-forget last used timestamp update
+  if (keyRecord) {
+    void updateApiKeyLastUsed(keyRecord.id);
+  }
   void updatePlatformApiKeyLastUsed(platform.id);
 
   return next();

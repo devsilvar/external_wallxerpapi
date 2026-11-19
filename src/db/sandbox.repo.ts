@@ -46,6 +46,7 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
         name: SANDBOX_PLATFORM_NAME,
         ownerUserId: user.id,
         isActive: true,
+        approvalStatus: 'ACTIVE',
         flatFeeNgn: '100.00',
         subscriptionExpiresAt: futureExpiry,
         apiKeyHash,
@@ -58,6 +59,23 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
       data: { apiKeyHash, apiKeyPrefix },
     });
   }
+
+  // Ensure PlatformApiKey row exists
+  await db.platformApiKey.upsert({
+    where: { keyHash: apiKeyHash },
+    update: {
+      platformId: platform.id,
+      prefix: apiKeyPrefix,
+      revokedAt: null,
+    },
+    create: {
+      platformId: platform.id,
+      label: 'Sandbox API Key',
+      prefix: apiKeyPrefix,
+      keyHash: apiKeyHash,
+      createdByUserId: user.id,
+    },
+  });
 
   // 3. Ensure sandbox merchant business exists
   let business = await db.business.findFirst({
