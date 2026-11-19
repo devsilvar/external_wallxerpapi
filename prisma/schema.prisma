@@ -150,6 +150,8 @@ model User {
   auditLogs   AuditLog[]
   businesses  Business[]
   memberships BusinessMember[]
+  portalTokens PortalToken[]
+  sessions    Session[]
 
   @@index([email])
   @@index([phone])
@@ -427,12 +429,21 @@ model Platform {
   suspendedReason       String?   @map("suspended_reason")
   flatFeeNgn            Decimal?  @map("flat_fee_ngn") @db.Decimal(12, 2)
   subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  /// @deprecated Replaced by PlatformApiKey (portal move). Safe to drop in a follow-up migration.
   apiKeyHash            String?   @unique @map("api_key_hash") @db.VarChar(64)
+  /// @deprecated Replaced by PlatformApiKey (portal move). Safe to drop in a follow-up migration.
   apiKeyPrefix          String?   @map("api_key_prefix") @db.VarChar(16)
+  /// @deprecated Replaced by PlatformApiKey (portal move). Safe to drop in a follow-up migration.
   apiKeyLastUsedAt      DateTime? @map("api_key_last_used_at")
+  approvalStatus        String    @default("ACTIVE") @map("approval_status") @db.VarChar(16)
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
+  apiKeys               PlatformApiKey[]
+  portalTokens          PortalToken[]
+  sessions              Session[]
+
+  @@index([approvalStatus])
   @@map("platforms")
 }
 
@@ -455,15 +466,71 @@ model ExternalSequence {
 }
 
 model ExternalAdmin {
-  id         String    @id @default(uuid())
-  name       String
-  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
-  role       String    @default("admin")
-  expiresAt  DateTime? @map("expires_at")
-  allowedIps String[]  @default([]) @map("allowed_ips")
+  id String @id @default(uuid())
+  name String
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+  previousTokenHash String? @map("previous_token_hash") @db.VarChar(64)
+  role String @default("admin")
+  expiresAt DateTime? @map("expires_at")
+  allowedIps String[] @default([]) @map("allowed_ips")
   lastUsedAt DateTime? @map("last_used_at")
-  revokedAt  DateTime? @map("revoked_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@map("external_admins")
+}
+
+model PlatformApiKey {
+  id              String    @id @default(uuid())
+  platformId      String    @map("platform_id")
+  platform        Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  label           String    @default("default") @db.VarChar(64)
+  prefix          String    @db.VarChar(16)
+  keyHash         String    @unique @map("key_hash") @db.VarChar(64)
+  createdByUserId String?   @map("created_by_user_id")
+  lastUsedAt      DateTime? @map("last_used_at")
+  revokedAt       DateTime? @map("revoked_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([platformId])
+  @@index([revokedAt])
+  @@map("platform_api_keys")
+}
+
+model PortalToken {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  platformId String    @map("platform_id")
+  kind       String    @db.VarChar(16)
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at")
+  usedAt     DateTime? @map("used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform   Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@map("portal_tokens")
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  userId     String    @map("user_id")
+  platformId String?   @map("platform_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  ip         String?   @map("ip_address") @db.VarChar(64)
+  userAgent  String?   @map("user_agent") @db.VarChar(256)
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform   Platform? @relation(fields: [platformId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("portal_sessions")
 }
