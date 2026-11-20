@@ -13,6 +13,7 @@ import { requirePlatformActive } from './middleware/requirePlatformActive.js';
 import { resolveAccountByPartner } from './middleware/resolveAccountByPartner.js';
 import { accountsRouter, onboardingHandler } from './routes/accounts.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
+import { portalAdminRouter } from './routes/portal-admin.routes.js';
 import { portalAuthRouter } from './routes/portal-auth.routes.js';
 import { portalKeysRouter } from './routes/portal-keys.routes.js';
 import { portalUsageRouter } from './routes/portal-usage.routes.js';
@@ -68,7 +69,10 @@ export function createApp(config: Config): Express {
   app.use('/public', publicRouter);
 
   // Admin surface routes (/admin/*)
+  v1Router.use('/admin', portalAdminRouter);
   v1Router.use('/admin', adminRouter);
+  app.use('/admin', portalAdminRouter);
+  app.use('/admin', adminRouter);
 
   // Developer portal routes (/portal/*)
   v1Router.use('/portal/keys', portalKeysRouter);

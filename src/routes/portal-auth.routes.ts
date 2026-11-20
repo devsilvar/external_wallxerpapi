@@ -117,6 +117,7 @@ portalAuthRouter.post(
             email: user.email,
             fullName: user.fullName,
             isVerified: user.isVerified,
+            role: user.role,
           },
           platform: {
             id: platform.id,
@@ -193,6 +194,7 @@ portalAuthRouter.post(
             email: user.email,
             fullName: user.fullName,
             isVerified: user.isVerified,
+            role: user.role,
           },
           platform: platform
             ? {

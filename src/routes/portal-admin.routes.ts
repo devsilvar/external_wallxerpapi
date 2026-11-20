@@ -9,7 +9,7 @@ import { listKeysForPlatform, revokeKeyForPlatform } from '../db/apiKey.repo.js'
 export const portalAdminRouter = Router();
 
 // All developer admin routes require administrator authentication
-portalAdminRouter.use(authenticateAdmin);
+portalAdminRouter.use('/developers', authenticateAdmin);
 
 const UpdateDeveloperSchema = z.object({
   approvalStatus: z.enum(['PENDING', 'LIVE', 'REJECTED', 'pending', 'live', 'rejected', 'ACTIVE', 'active']).optional(),
