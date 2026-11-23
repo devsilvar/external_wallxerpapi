@@ -11,13 +11,15 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
+    "postinstall": "prisma generate",
+    "start": "prisma migrate deploy && node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "assert:tenancy": "node scripts/assert-tenancy.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:load": "tsx tests/load/run-load-test.ts",
+    "seed": "tsx prisma/seed.ts",
     "seed:sandbox": "tsx src/cli/seed-sandbox.ts",
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
@@ -25,12 +27,16 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:validate": "prisma validate"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@prisma/client": "^6.0.1",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "pdfkit": "^0.20.2",
     "pino": "^9.6.0",
+    "prisma": "^6.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -41,7 +47,6 @@
     "@types/supertest": "^6.0.2",
     "eslint": "^9.19.0",
     "prettier": "^3.4.2",
-    "prisma": "^6.0.1",
     "supertest": "^7.2.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

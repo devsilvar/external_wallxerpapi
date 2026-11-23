@@ -61,6 +61,7 @@ export async function findActiveSession(
           fullName: true,
           isActive: true,
           isVerified: true,
+          role: true,
         },
       },
       platform: {

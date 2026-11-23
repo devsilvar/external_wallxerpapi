@@ -19,7 +19,7 @@ if (process.argv[1]?.endsWith('seed-sandbox.ts')) {
   seedSandboxTenant()
     .then((result) => {
       console.log('=====================================================');
-      console.log('   WOWO EXTERNAL API — SANDBOX CREDENTIALS');
+      console.log('   WALLXERPAPI — SANDBOX CREDENTIALS');
       console.log('=====================================================');
       console.log(`Account ID (businessId):    ${result.businessId}`);
       console.log(`Merchant ID:                ${result.merchantId}`);

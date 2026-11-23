@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     try {
       const result = await issuePlatformWithApiKey({ name, ownerEmail });
       console.log('=====================================================');
-      console.log('   WOWO EXTERNAL API — PLATFORM CREATED');
+      console.log('   WALLXERPAPI — PLATFORM CREATED');
       console.log('=====================================================');
       console.log(`Platform ID:     ${result.id}`);
       console.log(`Platform Name:   ${result.name}`);

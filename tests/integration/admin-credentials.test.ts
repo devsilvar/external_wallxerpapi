@@ -52,6 +52,11 @@ describe('Admin Credentials & Audit Logging (Phase B: tests/integration/admin-cr
       },
     });
 
+    // Sweep admin rows left behind by an earlier interrupted run
+    await prisma.externalAdmin.deleteMany({
+      where: { name: { startsWith: 'cred-test-' } },
+    });
+
     // 1. Seed root test admin
     adminToken = generateToken();
     const admin = await createAdmin({
@@ -94,18 +99,40 @@ describe('Admin Credentials & Audit Logging (Phase B: tests/integration/admin-cr
   });
 
   afterAll(async () => {
-    // Clean up created test entities
-    await prisma.auditLog.deleteMany({
-      where: {
-        OR: [{ platformId }, { businessId }, { resourceId: adminId }],
-      },
-    });
-    await prisma.business.deleteMany({ where: { platformId } });
-    await prisma.platform.deleteMany({ where: { id: platformId } });
-    await prisma.user.deleteMany({ where: { id: userId } });
-    await prisma.externalAdmin.deleteMany({
-      where: { name: { startsWith: testId } },
-    });
+    // Admin rows go first, by name prefix: this suite runs against a shared
+    // database, and a killed or half-failed run must never leave credentials
+    // behind. Every step is individually guarded so one failure cannot skip
+    // the rest, and nothing runs with an undefined filter (which would match
+    // every row).
+    await prisma.externalAdmin
+      .deleteMany({ where: { name: { startsWith: 'cred-test-' } } })
+      .catch(() => {
+        // best effort
+      });
+
+    if (platformId) {
+      await prisma.auditLog
+        .deleteMany({
+          where: {
+            OR: [{ platformId }, { businessId }, { resourceId: adminId }],
+          },
+        })
+        .catch(() => {
+          // best effort
+        });
+      await prisma.business.deleteMany({ where: { platformId } }).catch(() => {
+        // best effort
+      });
+      await prisma.platform.deleteMany({ where: { id: platformId } }).catch(() => {
+        // best effort
+      });
+    }
+
+    if (userId) {
+      await prisma.user.deleteMany({ where: { id: userId } }).catch(() => {
+        // best effort
+      });
+    }
   });
 
   describe('GET /admin/admins', () => {

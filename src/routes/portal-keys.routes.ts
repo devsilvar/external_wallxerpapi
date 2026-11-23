@@ -77,14 +77,23 @@ portalKeysRouter.post('/', async (req: Request, res: Response, next: NextFunctio
       environment
     );
 
+    const keyData = {
+      id: key.id,
+      platformId: key.platformId,
+      label: key.label,
+      prefix: key.prefix,
+      environment,
+      createdAt: key.createdAt,
+      lastUsedAt: key.lastUsedAt ?? null,
+      revokedAt: key.revokedAt ?? null,
+    };
+
     res.status(201).json({
       status: 'success',
       data: {
-        id: key.id,
-        label: key.label,
-        prefix: key.prefix,
-        createdAt: key.createdAt,
+        ...keyData,
         apiKey: rawKey,
+        key: keyData,
       },
     });
   } catch (err) {

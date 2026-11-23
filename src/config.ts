@@ -20,6 +20,7 @@ const EnvSchema = z.object({
   EXTERNAL_SHARE_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   EXTERNAL_TOMBSTONE_RETENTION_DAYS: z.coerce.number().int().positive().default(180),
   EXTERNAL_AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(730),
+EXTERNAL_USAGE_RETENTION_DAYS: z.coerce.number().int().positive().default(400),
 
   PLATFORM_FLAT_FEE_NGN: z.coerce.number().nonnegative().default(0),
 

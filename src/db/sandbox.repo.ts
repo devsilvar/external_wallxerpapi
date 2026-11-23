@@ -2,9 +2,9 @@ import { prisma, type DbClient } from './client.js';
 import { hashToken } from '../lib/token.js';
 import { logger } from '../lib/logger.js';
 
-export const SANDBOX_PLATFORM_NAME = 'Wowo Sandbox Platform';
-export const SANDBOX_EXTERNAL_CUSTOMER_ID = 'WOWO-SANDBOX-MERCHANT-01';
-export const SANDBOX_API_KEY = 'wowo_sandbox_key_7a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a';
+export const SANDBOX_PLATFORM_NAME = 'WallxErpApi Sandbox Platform';
+export const SANDBOX_EXTERNAL_CUSTOMER_ID = 'WALLX-SANDBOX-MERCHANT-01';
+export const SANDBOX_API_KEY = 'wallx_sandbox_key_7a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a3b4f5c9e1d2a';
 
 export interface SandboxSeedResult {
   platformId: string;
@@ -22,11 +22,11 @@ export interface SandboxSeedResult {
 export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxSeedResult> {
   // 1. Ensure sandbox owner user exists
   const user = await db.user.upsert({
-    where: { email: 'sandbox-owner@wowo.staging' },
+    where: { email: 'sandbox-owner@wallxerpapi.staging' },
     update: {},
     create: {
-      email: 'sandbox-owner@wowo.staging',
-      fullName: 'Wowo Sandbox Operator',
+      email: 'sandbox-owner@wallxerpapi.staging',
+      fullName: 'WallxErpApi Sandbox Operator',
       isActive: true,
     },
   });
@@ -93,9 +93,9 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
         platformId: platform.id,
         externalCustomerId: SANDBOX_EXTERNAL_CUSTOMER_ID,
         userId: user.id,
-        businessName: 'Wowo Demo Superstore (Sandbox)',
-        ownerName: 'Wowo Integration Tester',
-        merchantId: 'WOWO-SBX-0001',
+        businessName: 'WallxErpApi Demo Business (Sandbox)',
+        ownerName: 'WallxErpApi Integration Tester',
+        merchantId: 'WALLX-SBX-0001',
         isActive: true,
         address: '100 Innovation Drive, Sandbox City',
         city: 'Lagos',
@@ -117,7 +117,7 @@ export async function seedSandboxTenant(db: DbClient = prisma): Promise<SandboxS
   return {
     platformId: platform.id,
     businessId: business.id,
-    merchantId: business.merchantId ?? 'WOWO-SBX-0001',
+    merchantId: business.merchantId ?? 'WALLX-SBX-0001',
     externalCustomerId: business.externalCustomerId,
     apiKey: SANDBOX_API_KEY,
        isNew,

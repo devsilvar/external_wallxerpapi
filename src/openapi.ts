@@ -1,4 +1,9 @@
 import { EXPENSE_CATEGORIES } from './validators/expense.validator.js';
+import {
+  attachRequestExamples,
+  attachResponseAndParameterExamples,
+  type SpecForSamples,
+} from './openapi.samples.js';
 
 export const SALES_SOURCES = [
   'api',
@@ -19,15 +24,15 @@ export const SALES_SOURCES = [
 ] as const;
 
 export function buildOpenApiSpec() {
-  return {
+  const spec = {
     openapi: '3.1.0',
     info: {
-      title: 'Wowo External API',
+      title: 'WallxErpApi',
       version: '1.0.0',
       description: `
-# Wowo External Partner & Administrative API
+# WallxErpApi — Business Partner & ERP Integration API
 
-Production integration surface for POS partners, accounting integrations, and administrative back-office operations.
+Production integration surface for business ERP platforms, accounting integrations, and administrative back-office operations.
 
 ---
 
@@ -125,7 +130,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           type: 'object',
           properties: {
             id: { type: 'string', format: 'uuid' },
-            merchantId: { type: 'string', example: 'WOWO0000001' },
+            merchantId: { type: 'string', example: 'WALLX0000001' },
             businessName: { type: 'string', example: 'Lekki Supermarket Ltd' },
             ownerName: { type: 'string', example: 'Chinedu Okafor' },
             businessType: { type: 'string', nullable: true, example: 'retail' },
@@ -221,7 +226,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           properties: {
             id: { type: 'string', format: 'uuid' },
             invoiceNumber: { type: 'string', example: 'WX-2026-001' },
-            externalRef: { type: 'string', example: 'INV-WOWO-991' },
+            externalRef: { type: 'string', example: 'INV-WALLX-991' },
             customerId: { type: 'string', format: 'uuid', nullable: true },
             customerName: { type: 'string', example: 'Dangote Foods Distribution' },
             subtotal: { type: 'string', example: '36000.00' },
@@ -256,7 +261,7 @@ Production integration surface for POS partners, accounting integrations, and ad
           type: 'object',
           properties: {
             id: { type: 'string', format: 'uuid' },
-            name: { type: 'string', example: 'Wowo POS Core' },
+            name: { type: 'string', example: 'WallxErpApi Platform' },
             ownerUserId: { type: 'string', format: 'uuid' },
             isActive: { type: 'boolean', example: true },
             suspendedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -274,9 +279,9 @@ Production integration surface for POS partners, accounting integrations, and ad
           properties: {
             id: { type: 'string', format: 'uuid' },
             platformId: { type: 'string', format: 'uuid' },
-            platformName: { type: 'string', example: 'Wowo POS Core' },
-            externalCustomerId: { type: 'string', example: 'WOWO-CUST-8812' },
-            merchantId: { type: 'string', example: 'WOWO0001042' },
+            platformName: { type: 'string', example: 'WallxErpApi Platform' },
+            externalCustomerId: { type: 'string', example: 'WALLX-CUST-8812' },
+            merchantId: { type: 'string', example: 'WALLX0001042' },
             businessName: { type: 'string', example: 'Mama Put Kitchen' },
             ownerName: { type: 'string', example: 'Ngozi Eze' },
             contactEmail: { type: 'string', nullable: true, example: 'ngozi@example.com' },
@@ -312,7 +317,28 @@ Production integration surface for POS partners, accounting integrations, and ad
                 expenses: { type: 'integer', example: 44200 },
               },
             },
-            adminCredentials: {
+            api: {
+type: 'object',
+properties: {
+windowDays: { type: 'integer', example: 30 },
+requests: { type: 'integer', example: 18240 },
+errors: { type: 'integer', example: 96 },
+errorRate: { type: 'number', example: 0.53 },
+byPlatform: {
+type: 'array',
+items: {
+type: 'object',
+properties: {
+platformId: { type: 'string' },
+platformName: { type: 'string' },
+requests: { type: 'integer', example: 12300 },
+errors: { type: 'integer', example: 42 },
+},
+},
+},
+},
+},
+adminCredentials: {
               type: 'object',
               properties: {
                 totalAdmins: { type: 'integer', example: 4 },
@@ -559,14 +585,14 @@ Production integration surface for POS partners, accounting integrations, and ad
                 schema: {
                   type: 'object',
                   properties: {
-                    businessName: { type: 'string', maxLength: 100 },
-                    ownerName: { type: 'string', maxLength: 100 },
-                    businessType: { type: 'string', maxLength: 50 },
-                    address: { type: 'string', maxLength: 255 },
-                    city: { type: 'string', maxLength: 100 },
-                    state: { type: 'string', maxLength: 100 },
-                    contactPhone: { type: 'string', maxLength: 50 },
-                    contactEmail: { type: 'string', format: 'email', maxLength: 100 },
+                    businessName: { type: 'string', maxLength: 100, example: 'Lekki Supermarket Ltd' },
+                    ownerName: { type: 'string', maxLength: 100, example: 'Chinedu Okafor' },
+                    businessType: { type: 'string', maxLength: 50, example: 'retail' },
+                    address: { type: 'string', maxLength: 255, example: '14 Admiralty Way, Lekki Phase 1' },
+                    city: { type: 'string', maxLength: 100, example: 'Lagos' },
+                    state: { type: 'string', maxLength: 100, example: 'Lagos' },
+                    contactPhone: { type: 'string', maxLength: 50, example: '+2348012345678' },
+                    contactEmail: { type: 'string', format: 'email', maxLength: 100, example: 'contact@lekkisupermarket.ng' },
                   },
                 },
               },
@@ -670,15 +696,15 @@ Production integration surface for POS partners, accounting integrations, and ad
                   type: 'object',
                   required: ['externalId', 'name'],
                   properties: {
-                    externalId: { type: 'string', maxLength: 100 },
-                    name: { type: 'string', maxLength: 200 },
-                    email: { type: 'string', format: 'email', nullable: true },
-                    phone: { type: 'string', maxLength: 50, nullable: true },
-                    address: { type: 'string', maxLength: 255, nullable: true },
-                    city: { type: 'string', maxLength: 100, nullable: true },
-                    state: { type: 'string', maxLength: 100, nullable: true },
-                    taxId: { type: 'string', maxLength: 50, nullable: true },
-                    notes: { type: 'string', maxLength: 500, nullable: true },
+                    externalId: { type: 'string', maxLength: 100, example: 'POS-CUST-9821' },
+                    name: { type: 'string', maxLength: 200, example: 'Folake Adeleke' },
+                    email: { type: 'string', format: 'email', nullable: true, example: 'folake@example.com' },
+                    phone: { type: 'string', maxLength: 50, nullable: true, example: '+2348099887766' },
+                    address: { type: 'string', maxLength: 255, nullable: true, example: 'Plot 5 Victoria Island' },
+                    city: { type: 'string', maxLength: 100, nullable: true, example: 'Lagos' },
+                    state: { type: 'string', maxLength: 100, nullable: true, example: 'Lagos' },
+                    taxId: { type: 'string', maxLength: 50, nullable: true, example: '10987654-0001' },
+                    notes: { type: 'string', maxLength: 500, nullable: true, example: 'VIP Retail Customer' },
                   },
                 },
               },
@@ -718,14 +744,14 @@ Production integration surface for POS partners, accounting integrations, and ad
                 schema: {
                   type: 'object',
                   properties: {
-                    name: { type: 'string' },
-                    email: { type: 'string', nullable: true },
-                    phone: { type: 'string', nullable: true },
-                    address: { type: 'string', nullable: true },
-                    city: { type: 'string', nullable: true },
-                    state: { type: 'string', nullable: true },
-                    taxId: { type: 'string', nullable: true },
-                    notes: { type: 'string', nullable: true },
+                    name: { type: 'string', example: 'Folake Adeleke' },
+                    email: { type: 'string', nullable: true, example: 'folake@example.com' },
+                    phone: { type: 'string', nullable: true, example: '+2348099887766' },
+                    address: { type: 'string', nullable: true, example: 'Plot 5 Victoria Island' },
+                    city: { type: 'string', nullable: true, example: 'Lagos' },
+                    state: { type: 'string', nullable: true, example: 'Lagos' },
+                    taxId: { type: 'string', nullable: true, example: '10987654-0001' },
+                    notes: { type: 'string', nullable: true, example: 'VIP Retail Customer' },
                   },
                 },
               },
@@ -1576,4 +1602,11 @@ Production integration surface for POS partners, accounting integrations, and ad
       },
     },
   };
+
+  // The console seeds its JSON editor from request-body `example` values, so every endpoint gets
+  // one. Deriving it here (rather than hand-writing 20 examples) keeps it faithful to the schema.
+  attachRequestExamples(spec as unknown as SpecForSamples);
+  attachResponseAndParameterExamples(spec as unknown as SpecForSamples);
+
+  return spec;
 }

@@ -15,7 +15,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       // Keeps each test file's Prisma pool small enough that the shared test
       // database does not run out of connections under parallel file execution.
-      DATABASE_CONNECTION_LIMIT: '5',
+      DATABASE_CONNECTION_LIMIT: '3',
     },
   },
 });

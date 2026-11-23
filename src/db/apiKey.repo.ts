@@ -5,8 +5,10 @@ import { hashToken } from '../lib/token.js';
 
 export interface KeySummary {
   id: string;
+  platformId: string;
   label: string;
   prefix: string;
+  environment: 'test' | 'live';
   lastUsedAt: Date | null;
   revokedAt: Date | null;
   createdAt: Date;
@@ -24,6 +26,7 @@ export async function listKeysForPlatform(
     where: { platformId },
     select: {
       id: true,
+      platformId: true,
       label: true,
       prefix: true,
       lastUsedAt: true,
@@ -34,7 +37,10 @@ export async function listKeysForPlatform(
     orderBy: { createdAt: 'desc' },
   });
 
-  return keys;
+  return keys.map((k) => ({
+    ...k,
+    environment: k.prefix.startsWith('sk_ext_test_') ? ('test' as const) : ('live' as const),
+  }));
 }
 
 /**

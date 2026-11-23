@@ -37,6 +37,7 @@ declare global {
           email: string | null;
           fullName: string | null;
           isVerified: boolean;
+          role: string;
         };
         platform?: {
           id: string;

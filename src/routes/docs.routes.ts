@@ -28,7 +28,7 @@ const renderSwaggerHtml = (req: Request, res: Response) => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wowo External API — Interactive Documentation</title>
+  <title>WallxErpApi — Interactive Documentation</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css" />
   <style>
     body {
@@ -88,7 +88,7 @@ const renderSwaggerHtml = (req: Request, res: Response) => {
 <body>
   <div class="custom-header">
     <div style="display:flex; align-items:center;">
-      <h1>Wowo External API</h1>
+      <h1>WallxErpApi</h1>
       <span class="badge">v1.0.0</span>
     </div>
     <div class="nav-links">

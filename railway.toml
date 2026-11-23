@@ -1,0 +1,26 @@
+# Railway build/deploy config for the external API.
+#
+# This file only takes effect when the Railway service's Root Directory is this
+# folder. If the service is wired to a monorepo repo, set Root Directory to
+# `external-api` in the service settings — otherwise Railpack is handed the repo
+# root, finds no package.json, and fails language detection.
+
+[build]
+builder = "RAILPACK"
+buildCommand = "npm run build"
+watchPatterns = [
+  "src/**",
+  "prisma/**",
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+  "tsconfig.build.json",
+  "railway.toml",
+]
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

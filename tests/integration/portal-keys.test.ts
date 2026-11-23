@@ -188,9 +188,26 @@ describe('Developer Portal Key Lifecycle (tests/integration/portal-keys.test.ts)
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('success');
-    expect(res.body.data.platformId).toBe(platformAId);
-    expect(res.body.data.merchantsCount).toBeGreaterThanOrEqual(1);
-    expect(res.body.data.totals).toBeDefined();
-    expect(res.body.data.totals.sales).toBeDefined();
+    expect(res.body.data.platform.id).toBe(platformAId);
+expect(res.body.data.platform.name).toBe('Platform A');
+    expect(res.body.data.merchants.total).toBeGreaterThanOrEqual(1);
+expect(res.body.data.merchants.active).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.keys.total).toBeGreaterThanOrEqual(1);
+expect(res.body.data.keys.test).toBeGreaterThanOrEqual(1);
+expect(res.body.data.activity).toBeDefined();
+    expect(res.body.data.activity.sales).toBeGreaterThanOrEqual(0);
+expect(Array.isArray(res.body.data.api.series)).toBe(true);
+expect(res.body.data.api.series.length).toBe(30);
+// Usage is recorded fire-and-forget on response finish, so poll briefly.
+let usageRes = res;
+for (let i = 0; i < 30 && (usageRes.body.data.api.requests ?? 0) < 1; i++) {
+ await new Promise((resolve) => setTimeout(resolve, 100));
+ usageRes = await request(app)
+ .get('/api/external/v1/portal/usage')
+ .set('Authorization', `Bearer ${sessionTokenA}`);
+}
+expect(usageRes.body.data.api.requests).toBeGreaterThanOrEqual(1);
+expect(usageRes.body.data.api.errors).toBeGreaterThanOrEqual(0);
+expect(usageRes.body.data.api.errorRate).toBeGreaterThanOrEqual(0);
   });
 });

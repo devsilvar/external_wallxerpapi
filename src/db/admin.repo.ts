@@ -1,8 +1,12 @@
-import type { ExternalAdmin } from '@prisma/client';
+import type { AdminSession, ExternalAdmin } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { prisma, type DbClient } from './client.js';
+import { fetchPlatformUsageSince } from './usage.repo.js';
+import { addUtcDays, lagosDateOnly } from '../lib/dates.js';
 
 export interface CreateAdminParams {
+email?: string | null;
+passwordHash?: string | null;
   name: string;
   tokenHash: string;
   role?: string;
@@ -24,6 +28,8 @@ export async function createAdmin(
       role: params.role ?? 'admin',
       expiresAt: params.expiresAt ?? null,
       allowedIps: params.allowedIps ?? [],
+email: params.email ? params.email.trim().toLowerCase() : null,
+passwordHash: params.passwordHash ?? null,
     },
   });
 }
@@ -108,6 +114,101 @@ export async function listAdmins(db: DbClient = prisma): Promise<ExternalAdmin[]
 /**
  * Lists all partner platforms with merchant account counts.
  */
+/**
+ * Finds an admin by login email. Case-insensitive: emails are stored lowercased.
+ */
+export async function findAdminByEmail(
+email: string,
+db: DbClient = prisma
+): Promise<ExternalAdmin | null> {
+return db.externalAdmin.findUnique({
+where: { email: email.trim().toLowerCase() },
+});
+}
+
+/**
+ * Attaches login credentials to an existing admin (used by the CLI to upgrade
+ * token-only operators created before admins had their own identity).
+ */
+export async function setAdminCredentials(
+adminId: string,
+credentials: { email: string; passwordHash: string },
+db: DbClient = prisma
+): Promise<ExternalAdmin> {
+return db.externalAdmin.update({
+where: { id: adminId },
+data: {
+email: credentials.email.trim().toLowerCase(),
+passwordHash: credentials.passwordHash,
+},
+});
+}
+
+export async function createAdminSession(
+params: {
+adminId: string;
+tokenHash: string;
+expiresAt: Date;
+ip?: string | null;
+userAgent?: string | null;
+},
+db: DbClient = prisma
+): Promise<AdminSession> {
+return db.adminSession.create({
+data: {
+adminId: params.adminId,
+tokenHash: params.tokenHash,
+expiresAt: params.expiresAt,
+ip: params.ip ?? null,
+userAgent: params.userAgent ?? null,
+},
+});
+}
+
+/**
+ * Resolves an admin session token to its admin, rejecting revoked and expired
+ * sessions. Returns null for anything that is not a live admin session.
+ */
+export async function findActiveAdminSession(
+tokenHash: string,
+db: DbClient = prisma
+): Promise<(AdminSession & { admin: ExternalAdmin }) | null> {
+const session = await db.adminSession.findUnique({
+where: { tokenHash },
+include: { admin: true },
+});
+
+if (!session) return null;
+if (session.revokedAt !== null) return null;
+if (session.expiresAt.getTime() < Date.now()) return null;
+if (session.admin.revokedAt !== null) return null;
+
+return session;
+}
+
+export async function touchAdminSession(
+sessionId: string,
+at: Date = new Date(),
+db: DbClient = prisma
+): Promise<void> {
+await db.adminSession
+.update({ where: { id: sessionId }, data: { lastSeenAt: at } })
+.catch(() => {
+// Fire-and-forget: a stale lastSeenAt must never fail the request
+});
+}
+
+export async function revokeAdminSession(
+tokenHash: string,
+at: Date = new Date(),
+db: DbClient = prisma
+): Promise<void> {
+await db.adminSession.updateMany({
+where: { tokenHash, revokedAt: null },
+data: { revokedAt: at },
+});
+}
+
 export async function listPlatformsAdmin(db: DbClient = prisma) {
   const platforms = await db.platform.findMany({
     orderBy: { createdAt: 'desc' },
@@ -294,6 +395,12 @@ export async function getAccountDetailAdmin(accountId: string, db: DbClient = pr
       expenses,
       customers,
     },
+    stats: {
+      salesCount: sales,
+      invoicesCount: invoices,
+      expensesCount: expenses,
+      customersCount: customers,
+    },
     createdAt: business.createdAt.toISOString(),
     updatedAt: business.updatedAt.toISOString(),
   };
@@ -392,7 +499,16 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
     db.externalAdmin.findMany({ where: { revokedAt: null } }),
   ]);
 
-  // Security warning surface (P8-04): detect non-expiring perpetual admin tokens
+  // API traffic rollup for the same 30-day window the developer portal shows.
+const API_USAGE_WINDOW_DAYS = 30;
+const apiUsageByPlatform = await fetchPlatformUsageSince(
+ addUtcDays(lagosDateOnly(), -(API_USAGE_WINDOW_DAYS - 1)),
+ db
+);
+const apiRequests = apiUsageByPlatform.reduce((sum, p) => sum + p.requests, 0);
+const apiErrors = apiUsageByPlatform.reduce((sum, p) => sum + p.errors, 0);
+
+// Security warning surface (P8-04): detect non-expiring perpetual admin tokens
   const warnings: string[] = [];
   for (const admin of adminTokens) {
     if (admin.expiresAt === null) {
@@ -409,10 +525,32 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
       total: totalAccounts,
       active: activeAccounts,
     },
+    sales: { count: totalSales },
+    invoices: { count: totalInvoices },
+    expenses: { count: totalExpenses },
     entities: {
-      sales: { count: totalSales },
-      invoices: { count: totalInvoices },
-      expenses: { count: totalExpenses },
+      sales: totalSales,
+      invoices: totalInvoices,
+      expenses: totalExpenses,
+    },
+    api: {
+ windowDays: API_USAGE_WINDOW_DAYS,
+ requests: apiRequests,
+ errors: apiErrors,
+ errorRate: apiRequests > 0 ? Math.round((apiErrors / apiRequests) * 10_000) / 100 : 0,
+ byPlatform: apiUsageByPlatform,
+},
+credentials: {
+      warnings,
+      tokens: adminTokens.map((a) => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        hasExpiry: a.expiresAt !== null,
+        expiresAt: a.expiresAt?.toISOString() ?? null,
+        hasIpAllowlist: a.allowedIps.length > 0,
+        lastUsedAt: a.lastUsedAt?.toISOString() ?? null,
+      })),
     },
     adminCredentials: {
       warnings,

@@ -2,6 +2,8 @@ import express, { Router, type Express, type RequestHandler } from 'express';
 import * as helmetNs from 'helmet';
 import type { Config } from './config.js';
 import { authenticatePartner } from './middleware/authenticatePartner.js';
+import { auditApiMutation } from './middleware/auditApiMutation.js';
+import { trackApiUsage } from './middleware/trackApiUsage.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { requestLogger } from './middleware/logger.js';
@@ -13,6 +15,7 @@ import { requirePlatformActive } from './middleware/requirePlatformActive.js';
 import { resolveAccountByPartner } from './middleware/resolveAccountByPartner.js';
 import { accountsRouter, onboardingHandler } from './routes/accounts.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
+import { adminAuthRouter } from './routes/admin-auth.routes.js';
 import { portalAdminRouter } from './routes/portal-admin.routes.js';
 import { portalAuthRouter } from './routes/portal-auth.routes.js';
 import { portalKeysRouter } from './routes/portal-keys.routes.js';
@@ -69,9 +72,11 @@ export function createApp(config: Config): Express {
   app.use('/public', publicRouter);
 
   // Admin surface routes (/admin/*)
-  v1Router.use('/admin', portalAdminRouter);
+  v1Router.use('/admin/auth', adminAuthRouter);
+v1Router.use('/admin', portalAdminRouter);
   v1Router.use('/admin', adminRouter);
-  app.use('/admin', portalAdminRouter);
+  app.use('/admin/auth', adminAuthRouter);
+app.use('/admin', portalAdminRouter);
   app.use('/admin', adminRouter);
 
   // Developer portal routes (/portal/*)
@@ -87,6 +92,7 @@ export function createApp(config: Config): Express {
   v1Router.post(
     '/accounts',
     authenticatePartner,
+trackApiUsage,
     createRateLimiter({
       limit: config.EXTERNAL_DATA_RATE_LIMIT,
       instanceCount: config.INSTANCE_COUNT,
@@ -100,6 +106,7 @@ export function createApp(config: Config): Express {
   const accountRouter = Router({ mergeParams: true });
   accountRouter.use(
     authenticatePartner,
+trackApiUsage,
     createRateLimiter({
       limit: config.EXTERNAL_DATA_RATE_LIMIT,
       instanceCount: config.INSTANCE_COUNT,
@@ -108,6 +115,7 @@ export function createApp(config: Config): Express {
     }),
     resolveAccountByPartner,
     requirePlatformActive,
+auditApiMutation,
     requireAccountActive
   );
 

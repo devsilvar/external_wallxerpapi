@@ -38,7 +38,7 @@ export async function incrementSequence(key: string, db: DbClient = prisma): Pro
 
 export async function nextMerchantId(db: DbClient = prisma): Promise<string> {
   const value = await incrementSequence('merchant', db);
-  return `WOWO${String(value).padStart(7, '0')}`;
+  return `WALLX${String(value).padStart(7, '0')}`;
 }
 
 export async function nextInvoiceNumber(
