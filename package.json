@@ -21,6 +21,8 @@
     "test:load": "tsx tests/load/run-load-test.ts",
     "seed": "tsx prisma/seed.ts",
     "seed:sandbox": "tsx src/cli/seed-sandbox.ts",
+    "test:password": "tsx scripts/test-admin-password.ts",
+    "reset:password": "tsx scripts/reset-admin-password.ts",
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
