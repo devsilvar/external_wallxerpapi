@@ -61,17 +61,18 @@ Or use the `start` script from `package.json`:
 ### Step 5: Deploy & Seed
 
 1. Railway will automatically build and deploy
-2. After first deployment, run seed **once** via Railway terminal:
+2. After first deployment, run seed **once**:
 
 ```bash
-npm run seed
+railway ssh -- "npm run seed"
 ```
 
-Or using Railway CLI:
+`railway run npm run seed` does **not** work — it runs on your machine while
+injecting `DATABASE_URL=postgres.railway.internal`, which only resolves inside
+Railway's private network. The seed must execute inside the container, hence
+`railway ssh`.
 
-```bash
-railway run npm run seed
-```
+The seed is idempotent (upsert on email), so it is safe to re-run.
 
 ---
 
@@ -189,11 +190,11 @@ Expected response:
 
 **Fix:**
 ```bash
-# Run seed on Railway
-railway run npm run seed
+# Run seed inside the Railway container
+railway ssh -- "npm run seed"
 
-# Verify admin exists in Railway logs
-railway logs | grep "Created admin user"
+# Verify the admin row exists
+railway ssh -- "npm run seed"   # re-runs upsert; prints the admin email
 ```
 
 ### CORS Errors

@@ -1,49 +1,59 @@
 import { PrismaClient } from '@prisma/client';
 import { hashPassword } from '../src/lib/password.js';
+import { generateToken, hashToken } from '../src/lib/token.js';
 
 const prisma = new PrismaClient();
+
+const ADMIN_EMAIL = 'admin@paymytax.ng';
+const ADMIN_PASSWORD = 'Admin@12345';
+const DEVELOPER_EMAIL = 'developer@test.com';
+const DEVELOPER_PASSWORD = 'Test@12345';
 
 async function main() {
   console.log('🌱 Seeding External API database...\n');
 
-  // Create admin user for approving API key requests
-  const adminPassword = await hashPassword('Admin@12345');
-  
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@paymytax.ng' },
+  // Operator admins live in `external_admins`, NOT in the developer `User`
+  // table. /admin/auth/login resolves credentials from external_admins only —
+  // seeding a User with role 'admin' produces an account that can never log in.
+  const adminPasswordHash = await hashPassword(ADMIN_PASSWORD);
+
+  const admin = await prisma.externalAdmin.upsert({
+    where: { email: ADMIN_EMAIL },
     update: {
-      passwordHash: adminPassword,
+      name: 'PayMyTax Admin',
+      passwordHash: adminPasswordHash,
       role: 'admin',
-      isVerified: true,
-      isActive: true,
+      revokedAt: null,
+      expiresAt: null,
     },
     create: {
-      email: 'admin@paymytax.ng',
-      passwordHash: adminPassword,
-      fullName: 'PayMyTax Admin',
+      name: 'PayMyTax Admin',
+      email: ADMIN_EMAIL,
+      passwordHash: adminPasswordHash,
+      // tokenHash is required + unique; this placeholder operator token is never
+      // printed or used. Console login goes through the password, not the token.
+      tokenHash: hashToken(generateToken()),
       role: 'admin',
-      isVerified: true,
-      isActive: true,
     },
   });
 
-  console.log('✅ Created admin user:', admin.email);
-  console.log('   Password: Admin@12345\n');
+  console.log('✅ Admin console account ready:', admin.email);
+  console.log(`   Password: ${ADMIN_PASSWORD}\n`);
 
-  // Create test developer account with platform
-  const devPassword = await hashPassword('Test@12345');
-  
+  // Developer portal account (separate identity from the admin above).
+  const devPasswordHash = await hashPassword(DEVELOPER_PASSWORD);
+
   const testDev = await prisma.user.upsert({
-    where: { email: 'developer@test.com' },
+    where: { email: DEVELOPER_EMAIL },
     update: {
-      passwordHash: devPassword,
+      passwordHash: devPasswordHash,
       role: 'user',
       isVerified: true,
       isActive: true,
     },
     create: {
-      email: 'developer@test.com',
-      passwordHash: devPassword,
+      email: DEVELOPER_EMAIL,
+      passwordHash: devPasswordHash,
       fullName: 'Test Developer',
       role: 'user',
       isVerified: true,
@@ -51,10 +61,9 @@ async function main() {
     },
   });
 
-  console.log('✅ Created test developer:', testDev.email);
-  console.log('   Password: Test@12345');
+  console.log('✅ Developer account ready:', testDev.email);
+  console.log(`   Password: ${DEVELOPER_PASSWORD}`);
 
-  // Create platform for test developer
   const testPlatform = await prisma.platform.upsert({
     where: { ownerUserId: testDev.id },
     update: {
@@ -70,9 +79,7 @@ async function main() {
     },
   });
 
-  console.log('✅ Created test platform:', testPlatform.name);
-  console.log('   Status: ACTIVE (Pre-approved)\n');
-
+  console.log('✅ Platform ready:', testPlatform.name, '(ACTIVE)\n');
   console.log('🎉 Seed completed successfully!');
 }
 
