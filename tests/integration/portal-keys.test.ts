@@ -210,4 +210,24 @@ expect(usageRes.body.data.api.requests).toBeGreaterThanOrEqual(1);
 expect(usageRes.body.data.api.errors).toBeGreaterThanOrEqual(0);
 expect(usageRes.body.data.api.errorRate).toBeGreaterThanOrEqual(0);
   });
+
+  it('9. POST /portal/keys rejects key creation when platform is suspended', async () => {
+    await prisma.platform.update({
+      where: { id: platformBId },
+      data: { isActive: false, suspendedAt: new Date(), suspendedReason: 'Compliance hold' },
+    });
+
+    const res = await request(app)
+      .post('/api/external/v1/portal/keys')
+      .set('Authorization', `Bearer ${sessionTokenB}`)
+      .send({ label: 'Blocked Key', environment: 'test' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('PLATFORM_SUSPENDED');
+
+    await prisma.platform.update({
+      where: { id: platformBId },
+      data: { isActive: true, suspendedAt: null, suspendedReason: null },
+    });
+  });
 });

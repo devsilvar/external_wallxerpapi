@@ -12,7 +12,20 @@ export const portalAdminRouter = Router();
 portalAdminRouter.use('/developers', authenticateAdmin);
 
 const UpdateDeveloperSchema = z.object({
-  approvalStatus: z.enum(['PENDING', 'LIVE', 'REJECTED', 'pending', 'live', 'rejected', 'ACTIVE', 'active']).optional(),
+  approvalStatus: z
+    .enum([
+      'PENDING',
+      'LIVE',
+      'REJECTED',
+      'ACTIVE',
+      'SUSPENDED',
+      'pending',
+      'live',
+      'rejected',
+      'active',
+      'suspended',
+    ])
+    .optional(),
   isActive: z.boolean().optional(),
   name: z.string().min(1).max(255).optional(),
   platformName: z.string().min(1).max(255).optional(),
@@ -99,7 +112,20 @@ portalAdminRouter.get('/developers', async (req: Request, res: Response, next: N
     });
 
     if (status) {
-      results = results.filter((r) => r.platform?.approvalStatus?.toUpperCase() === status);
+      results = results.filter((r) => {
+        const plat = r.platform;
+        if (!plat) return false;
+        const normalizedStatus = plat.approvalStatus?.toUpperCase();
+        const isSuspended = !plat.isActive || Boolean(plat.suspendedAt) || normalizedStatus === 'SUSPENDED';
+
+        if (status === 'SUSPENDED') {
+          return isSuspended;
+        }
+        if (status === 'LIVE' || status === 'ACTIVE') {
+          return !isSuspended && (normalizedStatus === 'LIVE' || normalizedStatus === 'ACTIVE');
+        }
+        return !isSuspended && normalizedStatus === status;
+      });
     }
 
     res.status(200).json({
@@ -238,9 +264,19 @@ portalAdminRouter.patch(
 
       const oldPlatformData = { ...platform };
       const platformUpdateData: any = {};
+      const normalizedApproval = approvalStatus?.toUpperCase();
 
-      if (approvalStatus !== undefined) {
-        platformUpdateData.approvalStatus = approvalStatus.toUpperCase();
+      if (normalizedApproval !== undefined) {
+        platformUpdateData.approvalStatus = normalizedApproval;
+        if (normalizedApproval === 'SUSPENDED') {
+          platformUpdateData.isActive = false;
+          platformUpdateData.suspendedAt = new Date();
+          platformUpdateData.suspendedReason = suspendedReason || 'Suspended by administrator';
+        } else if ((normalizedApproval === 'LIVE' || normalizedApproval === 'ACTIVE') && isActive !== false) {
+          platformUpdateData.isActive = true;
+          platformUpdateData.suspendedAt = null;
+          platformUpdateData.suspendedReason = null;
+        }
       }
 
       if (isActive !== undefined) {
@@ -251,6 +287,9 @@ portalAdminRouter.patch(
         } else {
           platformUpdateData.suspendedAt = null;
           platformUpdateData.suspendedReason = null;
+          if (oldPlatformData.approvalStatus?.toUpperCase() === 'SUSPENDED' && normalizedApproval === undefined) {
+            platformUpdateData.approvalStatus = 'LIVE';
+          }
         }
       }
 
@@ -265,10 +304,12 @@ portalAdminRouter.patch(
 
       // Audit action determination
       let auditAction = 'DEVELOPER_UPDATED';
-      if (approvalStatus && approvalStatus.toUpperCase() === 'LIVE') {
+      if (normalizedApproval === 'LIVE' || normalizedApproval === 'ACTIVE') {
         auditAction = 'DEVELOPER_APPROVED';
-      } else if (isActive === false) {
+      } else if (isActive === false || normalizedApproval === 'SUSPENDED') {
         auditAction = 'DEVELOPER_SUSPENDED';
+      } else if (isActive === true && !oldPlatformData.isActive) {
+        auditAction = 'DEVELOPER_REACTIVATED';
       }
 
       await createAuditLog(null, {

@@ -139,6 +139,17 @@ describe('Entitlement & Kill-switch integration (tests/integration/entitlement.t
       expect(dataRes.body.error.code).toBe('PLATFORM_SUSPENDED');
       expect(dataRes.body.error.message).toContain('Regulatory compliance');
 
+      const onboardRes = await request(app)
+        .post('/api/external/v1/accounts')
+        .set('Authorization', `Bearer ${apiKey}`)
+        .send({
+          customerId: `blocked-${testId}`,
+          businessName: 'Blocked Onboarding Business',
+        });
+      expect(onboardRes.status).toBe(403);
+      expect(onboardRes.body.error.code).toBe('PLATFORM_SUSPENDED');
+      expect(onboardRes.body.error.message).toContain('Regulatory compliance');
+
       // Restore platform
       await prisma.platform.update({
         where: { id: platformId },

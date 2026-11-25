@@ -88,17 +88,18 @@ app.use('/admin', portalAdminRouter);
   app.use('/portal', portalAuthRouter);
 
   // Partner customer onboarding endpoint: POST /api/external/v1/accounts
-  // Authenticated by partner Platform API Key
+  // Authenticated by partner Platform API Key and gated by platform active status
   v1Router.post(
     '/accounts',
     authenticatePartner,
-trackApiUsage,
+    trackApiUsage,
     createRateLimiter({
       limit: config.EXTERNAL_DATA_RATE_LIMIT,
       instanceCount: config.INSTANCE_COUNT,
       windowMs: 60_000,
       keyGenerator: tokenKeyGenerator,
     }),
+    requirePlatformActive,
     onboardingHandler
   );
 

@@ -20,7 +20,7 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
 
     const spec = res.body;
     expect(spec.openapi).toBe('3.1.0');
-    expect(spec.info.title).toBe('Wowo External API');
+    expect(spec.info.title).toBe('WallxErpApi');
 
     // Assert 27 ExpenseCategory members and 15 SalesSource members
     expect(spec.components.schemas.ExpenseCategory.enum).toHaveLength(27);
@@ -70,19 +70,56 @@ describe('OpenAPI documentation and spec (tests/integration/openapi.test.ts)', (
     expect(paths).toContain('/api/external/v1/admin/admins');
     expect(paths).toContain('/api/external/v1/admin/admins/{id}');
 
-    // Assert security schemes
+    // Assert security schemes & InvoiceLineItem matches Zod validator
     expect(spec.components.securitySchemes.PlatformBearerAuth).toBeDefined();
     expect(spec.components.securitySchemes.AdminBearerAuth).toBeDefined();
+    expect(spec.components.schemas.InvoiceLineItem.required).toEqual([
+      'description',
+      'quantity',
+      'unitPrice',
+    ]);
+    expect(spec.components.schemas.InvoiceLineItem.properties.name).toBeUndefined();
 
-    // Write committed snapshot for externalApiFrontend
+    // Write committed snapshot for externalApiFrontend (stripping operator/admin surface)
     const fs = await import('node:fs');
     const path = await import('node:path');
     const snapshotDir = path.resolve(__dirname, '../../../externalApiFrontend/src/generated');
     if (fs.existsSync(path.dirname(snapshotDir))) {
       fs.mkdirSync(snapshotDir, { recursive: true });
+      const operatorPrefixes = ['/admin', '/api/external/v1/admin'];
+      const filteredPaths = Object.fromEntries(
+        Object.entries(spec.paths as Record<string, unknown>).filter(
+          ([k]) => !operatorPrefixes.some((p) => k === p || k.startsWith(`${p}/`))
+        )
+      );
+      const filteredSchemes = Object.fromEntries(
+        Object.entries((spec.components?.securitySchemes ?? {}) as Record<string, unknown>).filter(
+          ([k]) => k !== 'AdminBearerAuth'
+        )
+      );
+      const publicSpec = {
+        ...spec,
+        info: spec.info
+          ? {
+              ...spec.info,
+              description: String(spec.info.description ?? '').replace(
+                /^[ \t]*- \*\*Administrative Routes\*\*[^\n]*\r?\n?/gim,
+                ''
+              ),
+            }
+          : spec.info,
+        paths: filteredPaths,
+        tags: Array.isArray(spec.tags)
+          ? spec.tags.filter((t: { name?: string }) => !String(t?.name ?? '').trim().toLowerCase().startsWith('admin'))
+          : spec.tags,
+        components: {
+          ...spec.components,
+          securitySchemes: filteredSchemes,
+        },
+      };
       fs.writeFileSync(
         path.join(snapshotDir, 'openapi.snapshot.json'),
-        JSON.stringify(spec, null, 2),
+        JSON.stringify(publicSpec, null, 2),
         'utf8',
       );
     }

@@ -199,4 +199,37 @@ describe('Admin Developer Management & Readonly Guard (tests/integration/portal-
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('TOKEN_INVALID');
   });
+
+  it('8. Full admin can suspend and reactivate developer via PATCH /admin/developers/:id and filter by SUSPENDED', async () => {
+    const suspendRes = await request(app)
+      .patch(`/api/external/v1/admin/developers/${testDevUserId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        approvalStatus: 'SUSPENDED',
+        isActive: false,
+        suspendedReason: 'Policy check',
+      });
+
+    expect(suspendRes.status).toBe(200);
+    expect(suspendRes.body.data.platform.isActive).toBe(false);
+    expect(suspendRes.body.data.platform.suspendedReason).toBe('Policy check');
+
+    const listSuspended = await request(app)
+      .get('/api/external/v1/admin/developers?status=SUSPENDED')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(listSuspended.status).toBe(200);
+    expect(listSuspended.body.data.some((d: any) => d.id === testDevUserId)).toBe(true);
+
+    const reactivateRes = await request(app)
+      .patch(`/api/external/v1/admin/developers/${testDevUserId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        isActive: true,
+        approvalStatus: 'LIVE',
+      });
+
+    expect(reactivateRes.status).toBe(200);
+    expect(reactivateRes.body.data.platform.isActive).toBe(true);
+    expect(reactivateRes.body.data.platform.suspendedAt).toBeNull();
+  });
 });

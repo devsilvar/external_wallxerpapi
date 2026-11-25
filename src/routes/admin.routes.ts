@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { prisma } from '../db/client.js';
+import { createAuditLog } from '../db/scoped.js';
 import { AppError } from '../lib/errors.js';
 import { authenticateAdmin, requireAdminWrite } from '../middleware/adminAuth.js';
 import { portalAdminRouter } from './portal-admin.routes.js';
@@ -81,6 +82,24 @@ adminRouter.patch('/platforms/:id/approve', requireAdminWrite, async (req: Reque
       data: {
         approvalStatus: 'ACTIVE',
         isActive: true,
+        suspendedAt: null,
+        suspendedReason: null,
+      },
+    });
+
+    await createAuditLog(null, {
+      action: 'PLATFORM_APPROVED',
+      actor: req.admin?.name ?? 'admin',
+      platformId: id,
+      resourceType: 'platform',
+      resourceId: id,
+      oldData: {
+        approvalStatus: platform.approvalStatus,
+        isActive: platform.isActive,
+      },
+      newData: {
+        approvalStatus: updated.approvalStatus,
+        isActive: updated.isActive,
       },
     });
 
@@ -154,6 +173,16 @@ adminRouter.patch('/platforms/:id/suspend', requireAdminWrite, async (req: Reque
       },
     });
 
+    await createAuditLog(null, {
+      action: 'PLATFORM_SUSPENDED',
+      actor: req.admin?.name ?? 'admin',
+      platformId: id,
+      resourceType: 'platform',
+      resourceId: id,
+      oldData: { isActive: platform.isActive },
+      newData: { isActive: updated.isActive, suspendedReason: updated.suspendedReason },
+    });
+
     res.status(200).json({
       status: 'success',
       data: updated,
@@ -186,6 +215,16 @@ adminRouter.patch('/platforms/:id/activate', requireAdminWrite, async (req: Requ
         suspendedAt: null,
         suspendedReason: null,
       },
+    });
+
+    await createAuditLog(null, {
+      action: 'PLATFORM_ACTIVATED',
+      actor: req.admin?.name ?? 'admin',
+      platformId: id,
+      resourceType: 'platform',
+      resourceId: id,
+      oldData: { isActive: platform.isActive, suspendedReason: platform.suspendedReason },
+      newData: { isActive: updated.isActive },
     });
 
     res.status(200).json({

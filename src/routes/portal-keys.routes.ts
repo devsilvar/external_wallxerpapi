@@ -59,7 +59,16 @@ portalKeysRouter.post('/', async (req: Request, res: Response, next: NextFunctio
     }
 
     const { label, environment } = parsed.data;
-    const approvalStatus = req.developer?.platform?.approvalStatus?.toUpperCase();
+    const plat = req.developer?.platform;
+    if (plat && (!plat.isActive || plat.suspendedAt)) {
+      throw new AppError(
+        403,
+        'PLATFORM_SUSPENDED',
+        plat.suspendedReason || 'Platform access suspended'
+      );
+    }
+
+    const approvalStatus = plat?.approvalStatus?.toUpperCase();
 
     // Gate live key generation on platform approval
     if (environment === 'live' && approvalStatus !== 'ACTIVE' && approvalStatus !== 'LIVE') {

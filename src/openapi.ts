@@ -213,12 +213,12 @@ Production integration surface for business ERP platforms, accounting integratio
         },
         InvoiceLineItem: {
           type: 'object',
-          required: ['name', 'quantity', 'unitPrice'],
+          required: ['description', 'quantity', 'unitPrice'],
           properties: {
-            name: { type: 'string', example: 'Logistics and Delivery Services' },
+            description: { type: 'string', example: 'Logistics and Delivery Services' },
             quantity: { type: 'string', example: '3.00' },
             unitPrice: { type: 'string', example: '12000.00' },
-            description: { type: 'string', nullable: true, example: 'Interstate haulage' },
+            sortOrder: { type: 'integer', example: 0 },
           },
         },
         Invoice: {

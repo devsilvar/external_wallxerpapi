@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { prisma } from '../../src/db/client.js';
@@ -23,6 +23,7 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
   const ADMIN_EMAIL = `admin_${timestamp}@paymytax.ng`;
   const ADMIN_PASSWORD = 'Admin@12345';
 
+  let adminId: string;
   let sholarUserId: string;
   let sholarPlatformId: string;
   let sholarSessionToken: string;
@@ -38,13 +39,43 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
   beforeAll(async () => {
     // Provision operator admin
     const adminPasswordHash = await hashPassword(ADMIN_PASSWORD);
-    await createAdmin({
+    const admin = await createAdmin({
       name: 'Integration Admin Operator',
       email: ADMIN_EMAIL,
       passwordHash: adminPasswordHash,
       tokenHash: hashToken(generateToken()),
       role: 'admin',
     });
+    adminId = admin.id;
+  });
+
+  afterAll(async () => {
+    if (sholarPlatformId) {
+      const bIds = onboardedCustomers.map((c) => c.id);
+      if (bIds.length > 0) {
+        // Delete invoices before sales because Invoice.linkedSaleId has onDelete: Restrict
+        await prisma.invoiceLine.deleteMany({ where: { invoice: { businessId: { in: bIds } } } });
+        await prisma.invoice.deleteMany({ where: { businessId: { in: bIds } } });
+        await prisma.saleLineItem.deleteMany({ where: { sale: { businessId: { in: bIds } } } });
+        await prisma.salesTransaction.deleteMany({ where: { businessId: { in: bIds } } });
+        await prisma.expense.deleteMany({ where: { businessId: { in: bIds } } });
+        await prisma.customer.deleteMany({ where: { businessId: { in: bIds } } });
+        await prisma.auditLog.deleteMany({ where: { businessId: { in: bIds } } });
+        await prisma.business.deleteMany({ where: { id: { in: bIds } } });
+      }
+      await prisma.auditLog.deleteMany({ where: { platformId: sholarPlatformId } });
+      await prisma.apiUsageDaily.deleteMany({ where: { platformId: sholarPlatformId } });
+      await prisma.session.deleteMany({ where: { platformId: sholarPlatformId } });
+      await prisma.platformApiKey.deleteMany({ where: { platformId: sholarPlatformId } });
+      await prisma.platform.deleteMany({ where: { id: sholarPlatformId } });
+    }
+    if (sholarUserId) {
+      await prisma.user.deleteMany({ where: { id: sholarUserId } });
+    }
+    if (adminId) {
+      await prisma.adminSession.deleteMany({ where: { adminId } });
+      await prisma.externalAdmin.deleteMany({ where: { id: adminId } });
+    }
   });
 
   it('1. Mr. Sholar registers as a developer and receives a platform and test API key', async () => {
@@ -139,50 +170,58 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
   });
 
   it('5. Each customer creates 5 sales, 5 expenses, and 5 invoices with PDF downloads', async () => {
-    for (let cIdx = 0; cIdx < onboardedCustomers.length; cIdx++) {
-      const cust = onboardedCustomers[cIdx];
+    const processCustomer = async (cIdx: number) => {
+      const cust = onboardedCustomers[cIdx]!;
       const cNum = cIdx + 1;
 
-      // 5 Sales
-      for (let s = 1; s <= 5; s++) {
-        const saleRes = await request(app)
-          .post(`/api/external/v1/accounts/${cust.externalCustomerId}/sales`)
-          .set('Authorization', `Bearer ${apiKey}`)
-          .send({
-            referenceId: `sale_${timestamp}_c${cNum}_${s}`,
-            amount: 25000 + (s * 5000),
-            source: 'pos',
-            status: 'confirmed',
-            transactionDate: new Date().toISOString().slice(0, 10),
-            customerName: `Buyer ${s}`,
-            items: [
-              {
-                name: `Item ${s}`,
-                quantity: 1,
-                unitPrice: 25000 + (s * 5000),
-                lineTotal: 25000 + (s * 5000),
-              },
-            ],
-          });
+      // 5 Sales (concurrent)
+      const saleResults = await Promise.all(
+        [1, 2, 3, 4, 5].map((s) =>
+          request(app)
+            .post(`/api/external/v1/accounts/${cust.externalCustomerId}/sales`)
+            .set('Authorization', `Bearer ${apiKey}`)
+            .send({
+              referenceId: `sale_${timestamp}_c${cNum}_${s}`,
+              amount: 25000 + s * 5000,
+              source: 'pos',
+              status: 'confirmed',
+              transactionDate: new Date().toISOString().slice(0, 10),
+              customerName: `Buyer ${s}`,
+              items: [
+                {
+                  name: `Item ${s}`,
+                  quantity: 1,
+                  unitPrice: 25000 + s * 5000,
+                  lineTotal: 25000 + s * 5000,
+                },
+              ],
+            })
+        )
+      );
+      for (const saleRes of saleResults) {
         expect(saleRes.status).toBe(201);
       }
 
-      // 5 Expenses
-      for (let e = 1; e <= 5; e++) {
-        const expRes = await request(app)
-          .post(`/api/external/v1/accounts/${cust.externalCustomerId}/expenses`)
-          .set('Authorization', `Bearer ${apiKey}`)
-          .send({
-            externalRef: `exp_${timestamp}_c${cNum}_${e}`,
-            category: 'office_supplies',
-            description: `Office supplies pack ${e}`,
-            amount: 10000 + (e * 2000),
-            expenseDate: new Date().toISOString().slice(0, 10),
-          });
+      // 5 Expenses (concurrent)
+      const expResults = await Promise.all(
+        [1, 2, 3, 4, 5].map((e) =>
+          request(app)
+            .post(`/api/external/v1/accounts/${cust.externalCustomerId}/expenses`)
+            .set('Authorization', `Bearer ${apiKey}`)
+            .send({
+              externalRef: `exp_${timestamp}_c${cNum}_${e}`,
+              category: 'office_supplies',
+              description: `Office supplies pack ${e}`,
+              amount: 10000 + e * 2000,
+              expenseDate: new Date().toISOString().slice(0, 10),
+            })
+        )
+      );
+      for (const expRes of expResults) {
         expect(expRes.status).toBe(201);
       }
 
-      // 5 Invoices
+      // 5 Invoices (sequential per customer to avoid atomic sequence contention & pool exhaustion)
       for (let inv = 1; inv <= 5; inv++) {
         const invRes = await request(app)
           .post(`/api/external/v1/accounts/${cust.externalCustomerId}/invoices`)
@@ -203,7 +242,6 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
         expect(invRes.status).toBe(201);
         const invoiceId = invRes.body.data.id;
 
-        // Issue invoice
         if (inv >= 2) {
           const issueRes = await request(app)
             .post(`/api/external/v1/accounts/${cust.externalCustomerId}/invoices/${invoiceId}/issue`)
@@ -211,7 +249,6 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
           expect(issueRes.status).toBe(200);
         }
 
-        // Mark paid
         if (inv === 3) {
           const paidRes = await request(app)
             .post(`/api/external/v1/accounts/${cust.externalCustomerId}/invoices/${invoiceId}/mark-paid`)
@@ -220,7 +257,6 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
           expect(paidRes.status).toBe(200);
         }
 
-        // Verify PDF Download on first invoice of customer 1
         if (cNum === 1 && inv === 1) {
           const pdfRes = await request(app)
             .get(`/api/external/v1/accounts/${cust.externalCustomerId}/invoices/${invoiceId}/pdf`)
@@ -229,7 +265,6 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
           expect(pdfRes.headers['content-type']).toBe('application/pdf');
           expect(pdfRes.body.slice(0, 4).toString()).toBe('%PDF');
 
-          // Public link check
           const linkRes = await request(app)
             .get(`/api/external/v1/accounts/${cust.externalCustomerId}/invoices/${invoiceId}/pdf-link`)
             .set('Authorization', `Bearer ${apiKey}`);
@@ -238,13 +273,18 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
           expect(shareUrl).toContain('/public/invoices/');
         }
       }
+    };
+
+    // Process customers sequentially to stay safely within Supabase session pooler limits
+    for (let idx = 0; idx < onboardedCustomers.length; idx++) {
+      await processCustomer(idx);
     }
-  });
+  }, 420_000);
 
   it('6. Edge cases and failure scenarios are properly handled', async () => {
-    const cust1 = onboardedCustomers[0];
+    const cust1 = onboardedCustomers[0]!;
 
-    // Scenario A: Idempotency Replay
+    // Scenario A1: Exact Idempotency Replay returns 200 without duplicating
     const replayRes = await request(app)
       .post(`/api/external/v1/accounts/${cust1.externalCustomerId}/sales`)
       .set('Authorization', `Bearer ${apiKey}`)
@@ -254,8 +294,30 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
         source: 'pos',
         status: 'confirmed',
         transactionDate: new Date().toISOString().slice(0, 10),
+        customerName: 'Buyer 1',
+        items: [
+          {
+            name: 'Item 1',
+            quantity: 1,
+            unitPrice: 30000,
+            lineTotal: 30000,
+          },
+        ],
       });
     expect(replayRes.status).toBe(200);
+
+    // Scenario A2: Mutated payload on existing referenceId is rejected with 409 conflict
+    const conflictRes = await request(app)
+      .post(`/api/external/v1/accounts/${cust1.externalCustomerId}/sales`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({
+        referenceId: `sale_${timestamp}_c1_1`,
+        amount: 99999,
+        source: 'pos',
+        status: 'confirmed',
+        transactionDate: new Date().toISOString().slice(0, 10),
+      });
+    expect(conflictRes.status).toBe(409);
 
     // Scenario B: UUID reserved check on onboarding
     const uuidRes = await request(app)
@@ -302,16 +364,16 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
     expect(platRes.status).toBe(200);
     const sholarPlat = platRes.body.data.find((p: any) => p.id === sholarPlatformId);
     expect(sholarPlat).toBeDefined();
-    expect(sholarPlat.accountTotal).toBe(10);
+    expect(sholarPlat.totalAccounts).toBe(10);
 
     // Admin account detail check
     const accDetail = await request(app)
-      .get(`/admin/accounts/${onboardedCustomers[0].id}`)
+      .get(`/admin/accounts/${onboardedCustomers[0]!.id}`)
       .set('Authorization', `Bearer ${adminSessionToken}`);
     expect(accDetail.status).toBe(200);
-    expect(accDetail.body.data.salesCount).toBeGreaterThanOrEqual(5);
-    expect(accDetail.body.data.expenseCount).toBeGreaterThanOrEqual(5);
-    expect(accDetail.body.data.invoiceCount).toBeGreaterThanOrEqual(5);
+    expect(accDetail.body.data.counts.sales).toBeGreaterThanOrEqual(5);
+    expect(accDetail.body.data.counts.expenses).toBeGreaterThanOrEqual(5);
+    expect(accDetail.body.data.counts.invoices).toBeGreaterThanOrEqual(5);
 
     // Admin audit logs check
     const auditRes = await request(app)
@@ -321,8 +383,8 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
     expect(Array.isArray(auditRes.body.data)).toBe(true);
   });
 
-  it('8. Admin suspends Mr. Sholar, blocking customer calls; then reactivates and resumes', async () => {
-    const cust1 = onboardedCustomers[0];
+  it('8. Admin suspends Mr. Sholar, blocking customer calls & onboarding; then reactivates and resumes', async () => {
+    const cust1 = onboardedCustomers[0]!;
 
     // Admin suspends
     const suspendRes = await request(app)
@@ -348,6 +410,17 @@ describe('Mr. Sholar Complete End-to-End User Journey (tests/integration/sholar-
     expect(blockedRes.status).toBe(403);
     expect(blockedRes.body.error.code).toBe('PLATFORM_SUSPENDED');
     expect(blockedRes.body.error.message).toContain('Routine compliance review');
+
+    // Onboarding new customers while suspended is also blocked with 403
+    const blockedOnboard = await request(app)
+      .post('/api/external/v1/accounts')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({
+        customerId: `blocked_${timestamp}`,
+        businessName: 'Blocked Customer Ltd',
+      });
+    expect(blockedOnboard.status).toBe(403);
+    expect(blockedOnboard.body.error.code).toBe('PLATFORM_SUSPENDED');
 
     // Admin reactivates
     const activateRes = await request(app)

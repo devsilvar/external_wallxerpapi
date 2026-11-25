@@ -566,7 +566,7 @@ async function main() {
   const sholarPlatInAdmin = (adminPlatformsRes.body.data || []).find((p: any) => p.id === sholarPlatform.id);
   console.log('   ✅ Admin Platforms List:');
   console.log('      Found Sholar Technologies:', !!sholarPlatInAdmin);
-  console.log('      Reported Account Total:', sholarPlatInAdmin?.accountTotal, '(Matches 10 onboarded)');
+  console.log('      Reported Total Accounts:', sholarPlatInAdmin?.totalAccounts, '(Matches 10 onboarded)');
 
   // B. Admin checks developer profile
   const adminDevRes = await request(app)
@@ -590,9 +590,9 @@ async function main() {
     .get(`/admin/accounts/${customers[0].id}`)
     .set('Authorization', `Bearer ${adminSessionToken}`);
   console.log('   ✅ Admin Account Detailed Metric Counts for Customer 1:');
-  console.log('      Sales Count:', cust1AdminDetail.body.data?.salesCount);
-  console.log('      Expense Count:', cust1AdminDetail.body.data?.expenseCount);
-  console.log('      Invoice Count:', cust1AdminDetail.body.data?.invoiceCount);
+  console.log('      Sales Count:', cust1AdminDetail.body.data?.counts?.sales);
+  console.log('      Expense Count:', cust1AdminDetail.body.data?.counts?.expenses);
+  console.log('      Invoice Count:', cust1AdminDetail.body.data?.counts?.invoices);
 
   // E. Admin queries audit logs
   const auditLogsRes = await request(app)
@@ -639,6 +639,22 @@ async function main() {
     console.log('      Message returned to client:', blockedSaleRes.body.error?.message);
   } else {
     console.error('   ❌ Gate failed! Request was not blocked with 403:', blockedSaleRes.status, blockedSaleRes.body);
+    process.exit(1);
+  }
+
+  // Verification 1b: Onboarding new customers while suspended is also blocked
+  const blockedOnboardRes = await request(app)
+    .post('/api/external/v1/accounts')
+    .set('Authorization', `Bearer ${apiKey}`)
+    .send({
+      customerId: `blocked_${Date.now()}`,
+      businessName: 'Blocked Onboarding Store',
+    });
+
+  if (blockedOnboardRes.status === 403 && blockedOnboardRes.body.error?.code === 'PLATFORM_SUSPENDED') {
+    console.log('   ✅ SUCCESS: Customer onboarding blocked while suspended (403 PLATFORM_SUSPENDED).');
+  } else {
+    console.error('   ❌ Onboarding gate failed while suspended:', blockedOnboardRes.status, blockedOnboardRes.body);
     process.exit(1);
   }
 
