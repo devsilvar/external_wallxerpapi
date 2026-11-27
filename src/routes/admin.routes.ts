@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { prisma } from '../db/client.js';
+import { revokeKeyForPlatform } from '../db/apiKey.repo.js';
 import { createAuditLog } from '../db/scoped.js';
 import { AppError } from '../lib/errors.js';
 import { authenticateAdmin, requireAdminWrite } from '../middleware/adminAuth.js';
@@ -10,6 +11,7 @@ import {
   fetchAccountsAdmin,
   fetchAdminsAdmin,
   fetchAuditLogsAdmin,
+  fetchPlatformDetailAdmin,
   fetchPlatformsAdmin,
   fetchUsageStatsAdmin,
   patchAccountAdmin,
@@ -19,6 +21,7 @@ import {
 import {
   AdminAuditLogsQuerySchema,
   AdminListAccountsQuerySchema,
+  AdminListPlatformsQuerySchema,
   CreateAdminSchema,
   UpdateAccountSchema,
   UpdatePlatformSchema,
@@ -34,12 +37,27 @@ adminRouter.use('/', portalAdminRouter);
 
 /**
  * GET /admin/platforms
- * Lists partner platforms with account totals and subscription status.
+ * Lists partner platforms with account counts, owner metadata, key counts, and 30d traffic.
  */
-adminRouter.get('/platforms', async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+adminRouter.get('/platforms', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const platforms = await fetchPlatformsAdmin();
+    const query = AdminListPlatformsQuerySchema.parse(req.query);
+    const platforms = await fetchPlatformsAdmin(query);
     res.status(200).json({ data: platforms });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /admin/platforms/:id
+ * Gets full partner platform detail including owner, API keys, account counts, and 30d traffic series.
+ */
+adminRouter.get('/platforms/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const platformId = req.params['id'] as string;
+    const platform = await fetchPlatformDetailAdmin(platformId);
+    res.status(200).json({ data: platform });
   } catch (err) {
     next(err);
   }
@@ -114,12 +132,12 @@ adminRouter.patch('/platforms/:id/approve', requireAdminWrite, async (req: Reque
 
 /**
  * PATCH /admin/platforms/:id/reject
- * Reject a platform
+ * Reject a platform application
  */
 adminRouter.patch('/platforms/:id/reject', requireAdminWrite, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { reason } = req.body;
+    const rawReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
 
     const platform = await prisma.platform.findUnique({
       where: { id },
@@ -133,8 +151,26 @@ adminRouter.patch('/platforms/:id/reject', requireAdminWrite, async (req: Reques
       where: { id },
       data: {
         approvalStatus: 'REJECTED',
+        isActive: false,
         suspendedAt: new Date(),
-        suspendedReason: reason || 'Platform rejected by admin',
+        suspendedReason: rawReason || 'Platform rejected by admin',
+      },
+    });
+
+    await createAuditLog(null, {
+      action: 'PLATFORM_REJECTED',
+      actor: req.admin?.name ?? 'admin',
+      platformId: id,
+      resourceType: 'platform',
+      resourceId: id,
+      oldData: {
+        approvalStatus: platform.approvalStatus,
+        isActive: platform.isActive,
+      },
+      newData: {
+        approvalStatus: updated.approvalStatus,
+        isActive: updated.isActive,
+        suspendedReason: updated.suspendedReason,
       },
     });
 
@@ -154,7 +190,7 @@ adminRouter.patch('/platforms/:id/reject', requireAdminWrite, async (req: Reques
 adminRouter.patch('/platforms/:id/suspend', requireAdminWrite, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { reason } = req.body;
+    const rawReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
 
     const platform = await prisma.platform.findUnique({
       where: { id },
@@ -169,7 +205,7 @@ adminRouter.patch('/platforms/:id/suspend', requireAdminWrite, async (req: Reque
       data: {
         isActive: false,
         suspendedAt: new Date(),
-        suspendedReason: reason || 'Platform suspended by admin',
+        suspendedReason: rawReason || 'Platform suspended by admin',
       },
     });
 
@@ -208,9 +244,16 @@ adminRouter.patch('/platforms/:id/activate', requireAdminWrite, async (req: Requ
       throw new AppError(404, 'PLATFORM_NOT_FOUND', 'Platform not found');
     }
 
+    const currentStatus = platform.approvalStatus.toUpperCase();
+    const nextApprovalStatus =
+      currentStatus === 'SUSPENDED' || currentStatus === 'REJECTED'
+        ? 'ACTIVE'
+        : platform.approvalStatus;
+
     const updated = await prisma.platform.update({
       where: { id },
       data: {
+        approvalStatus: nextApprovalStatus,
         isActive: true,
         suspendedAt: null,
         suspendedReason: null,
@@ -223,13 +266,61 @@ adminRouter.patch('/platforms/:id/activate', requireAdminWrite, async (req: Requ
       platformId: id,
       resourceType: 'platform',
       resourceId: id,
-      oldData: { isActive: platform.isActive, suspendedReason: platform.suspendedReason },
-      newData: { isActive: updated.isActive },
+      oldData: {
+        approvalStatus: platform.approvalStatus,
+        isActive: platform.isActive,
+        suspendedReason: platform.suspendedReason,
+      },
+      newData: {
+        approvalStatus: updated.approvalStatus,
+        isActive: updated.isActive,
+      },
     });
 
     res.status(200).json({
       status: 'success',
       data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /admin/platforms/:id/keys/:keyId/revoke
+ * Revokes an API key for a partner platform and writes an audit log.
+ */
+adminRouter.post('/platforms/:id/keys/:keyId/revoke', requireAdminWrite, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const platformId = req.params['id'] as string;
+    const keyId = req.params['keyId'] as string;
+
+    const platform = await prisma.platform.findUnique({ where: { id: platformId } });
+    if (!platform) {
+      throw new AppError(404, 'PLATFORM_NOT_FOUND', 'Platform not found');
+    }
+
+    const revoked = await revokeKeyForPlatform(platformId, keyId);
+    if (!revoked) {
+      throw new AppError(404, 'KEY_NOT_FOUND', 'API key not found on this platform');
+    }
+
+    await createAuditLog(null, {
+      action: 'PLATFORM_KEY_REVOKED',
+      actor: req.admin?.name ?? 'admin',
+      platformId,
+      resourceType: 'platform_api_key',
+      resourceId: keyId,
+      newData: {
+        keyId,
+        label: revoked.label,
+        revokedAt: revoked.revokedAt,
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'API key revoked successfully',
     });
   } catch (err) {
     next(err);
@@ -243,7 +334,13 @@ adminRouter.patch('/platforms/:id/activate', requireAdminWrite, async (req: Requ
 adminRouter.get('/accounts', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const query = AdminListAccountsQuerySchema.parse(req.query);
-    const result = await fetchAccountsAdmin(query);
+    const result = await fetchAccountsAdmin({
+      platformId: query.platformId,
+      search: query.search,
+      isActive: query.isActive === undefined ? undefined : query.isActive === 'true',
+      limit: query.limit,
+      cursor: query.cursor,
+    });
     res.status(200).json({
       data: result.items,
       page: result.page,

@@ -48,41 +48,46 @@ portalAdminRouter.get('/developers', async (req: Request, res: Response, next: N
     const whereClause: any = {};
 
     if (search) {
+      const matchingPlatforms = await prisma.platform.findMany({
+        where: { name: { contains: search, mode: 'insensitive' } },
+        select: { ownerUserId: true },
+      });
+      const matchingOwnerIds = matchingPlatforms.map((p) => p.ownerUserId);
+
       whereClause.OR = [
         { email: { contains: search, mode: 'insensitive' } },
         { fullName: { contains: search, mode: 'insensitive' } },
+        ...(matchingOwnerIds.length > 0 ? [{ id: { in: matchingOwnerIds } }] : []),
       ];
     }
 
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where: whereClause,
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          isActive: true,
-          isVerified: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      prisma.user.count({ where: whereClause }),
-    ]);
+    const users = await prisma.user.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        isActive: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
     // Attach platform data
     const userIds = users.map((u) => u.id);
-    const platforms = await prisma.platform.findMany({
-      where: { ownerUserId: { in: userIds } },
-      include: {
-        apiKeys: {
-          select: { id: true, revokedAt: true },
-        },
-      },
-    });
+    const platforms =
+      userIds.length > 0
+        ? await prisma.platform.findMany({
+            where: { ownerUserId: { in: userIds } },
+            include: {
+              apiKeys: {
+                select: { id: true, revokedAt: true },
+              },
+            },
+          })
+        : [];
 
     const platformByUser = new Map(platforms.map((p) => [p.ownerUserId, p]));
 
@@ -128,14 +133,17 @@ portalAdminRouter.get('/developers', async (req: Request, res: Response, next: N
       });
     }
 
+    const total = results.length;
+    const pagedResults = results.slice(skip, skip + limit);
+
     res.status(200).json({
       status: 'success',
-      data: results,
+      data: pagedResults,
       pagination: {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     });
   } catch (err) {

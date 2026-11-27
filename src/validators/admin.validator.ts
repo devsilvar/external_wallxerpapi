@@ -19,10 +19,18 @@ export const UpdateAccountSchema = z
   })
   .strict();
 
+export const AdminListPlatformsQuerySchema = z
+  .object({
+    status: z.enum(['PENDING', 'LIVE', 'ACTIVE', 'SUSPENDED', 'REJECTED']).optional(),
+    search: z.string().max(100).optional(),
+  })
+  .strict();
+
 export const AdminListAccountsQuerySchema = z
   .object({
     platformId: z.string().uuid().optional(),
     search: z.string().max(100).optional(),
+    isActive: z.enum(['true', 'false']).optional(),
     limit: z.coerce.number().int().min(1).max(250).default(50),
     cursor: z.string().uuid().optional(),
   })

@@ -3,6 +3,7 @@ import {
   findAdminById,
   findPlatformById,
   getAccountDetailAdmin,
+  getPlatformDetailAdmin,
   getUsageStatsAdmin,
   listAccountsAdmin,
   listAdmins,
@@ -17,8 +18,16 @@ import { AppError } from '../lib/errors.js';
 import { generateToken, hashToken } from '../lib/token.js';
 import type { CreateAdminInput } from '../validators/admin.validator.js';
 
-export async function fetchPlatformsAdmin() {
-  return listPlatformsAdmin();
+export async function fetchPlatformsAdmin(params?: { status?: string; search?: string }) {
+  return listPlatformsAdmin(params);
+}
+
+export async function fetchPlatformDetailAdmin(platformId: string) {
+  const platform = await getPlatformDetailAdmin(platformId);
+  if (!platform) {
+    throw new AppError(404, 'PLATFORM_NOT_FOUND', 'Platform not found');
+  }
+  return platform;
 }
 
 export async function patchPlatformAdmin(
@@ -37,7 +46,12 @@ export async function patchPlatformAdmin(
     throw new AppError(404, 'NOT_FOUND', 'Platform not found');
   }
 
-  const expiresAt = data.subscriptionExpiresAt ? new Date(data.subscriptionExpiresAt) : undefined;
+  const expiresAt =
+    data.subscriptionExpiresAt === undefined
+      ? undefined
+      : data.subscriptionExpiresAt === null
+        ? null
+        : new Date(data.subscriptionExpiresAt);
 
   const updated = await updatePlatformAdmin(platformId, {
     isActive: data.isActive,
@@ -76,6 +90,7 @@ export async function patchPlatformAdmin(
 export async function fetchAccountsAdmin(params: {
   platformId?: string;
   search?: string;
+  isActive?: boolean;
   limit: number;
   cursor?: string;
 }) {
@@ -147,6 +162,8 @@ export async function fetchAdminsAdmin() {
   return admins.map((a) => ({
     id: a.id,
     name: a.name,
+    email: a.email ?? null,
+    hasConsoleLogin: Boolean(a.email && a.passwordHash),
     role: a.role,
     createdAt: a.createdAt.toISOString(),
     lastUsedAt: a.lastUsedAt?.toISOString() ?? null,

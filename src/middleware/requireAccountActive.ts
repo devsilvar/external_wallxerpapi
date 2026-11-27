@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { findAccountEntitlement } from '../db/entitlement.repo.js';
 import { AppError } from '../lib/errors.js';
+import { buildExpiryDetails, isAccountExpired } from '../services/entitlement.service.js';
 
 export async function requireAccountActive(
   req: Request,
@@ -21,6 +22,17 @@ export async function requireAccountActive(
 
   if (!business || !business.isActive) {
     return next(new AppError(403, 'ACCOUNT_INACTIVE', 'Account is inactive'));
+  }
+
+  if (isAccountExpired(business)) {
+    return next(
+      new AppError(
+        402,
+        'SUBSCRIPTION_EXPIRED',
+        'Account subscription has expired',
+        buildExpiryDetails(business.subscriptionExpiresAt!)
+      )
+    );
   }
 
   return next();

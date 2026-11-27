@@ -1,8 +1,29 @@
 import type { AdminSession, ExternalAdmin } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { prisma, type DbClient } from './client.js';
-import { fetchPlatformUsageSince } from './usage.repo.js';
+import { listKeysForPlatform } from './apiKey.repo.js';
+import { fetchPlatformUsageSince, fetchUsageSeries } from './usage.repo.js';
 import { addUtcDays, lagosDateOnly } from '../lib/dates.js';
+
+export type EffectivePlatformStatus = 'PENDING' | 'LIVE' | 'SUSPENDED' | 'REJECTED';
+
+export function computeEffectivePlatformStatus(platform: {
+  isActive: boolean;
+  suspendedAt: Date | null;
+  approvalStatus: string;
+}): EffectivePlatformStatus {
+  const raw = platform.approvalStatus.toUpperCase();
+  if (!platform.isActive || platform.suspendedAt !== null || raw === 'SUSPENDED') {
+    return 'SUSPENDED';
+  }
+  if (raw === 'REJECTED') {
+    return 'REJECTED';
+  }
+  if (raw === 'ACTIVE' || raw === 'LIVE') {
+    return 'LIVE';
+  }
+  return 'PENDING';
+}
 
 export interface CreateAdminParams {
 email?: string | null;
@@ -209,35 +230,189 @@ data: { revokedAt: at },
 });
 }
 
-export async function listPlatformsAdmin(db: DbClient = prisma) {
+export async function listPlatformsAdmin(
+  params?: { status?: string; search?: string },
+  db: DbClient = prisma
+) {
   const platforms = await db.platform.findMany({
     orderBy: { createdAt: 'desc' },
   });
 
-  const platformSummaries = await Promise.all(
-    platforms.map(async (p) => {
-      const [accountCount, activeAccountCount] = await Promise.all([
-        db.business.count({ where: { platformId: p.id } }),
-        db.business.count({ where: { platformId: p.id, isActive: true } }),
-      ]);
-      return {
-        id: p.id,
-        name: p.name,
-        ownerUserId: p.ownerUserId,
-        isActive: p.isActive,
-        suspendedAt: p.suspendedAt?.toISOString() ?? null,
-        suspendedReason: p.suspendedReason,
-        flatFeeNgn: p.flatFeeNgn?.toString() ?? null,
-        subscriptionExpiresAt: p.subscriptionExpiresAt?.toISOString() ?? null,
-        totalAccounts: accountCount,
-        activeAccounts: activeAccountCount,
-        createdAt: p.createdAt.toISOString(),
-        updatedAt: p.updatedAt.toISOString(),
-      };
-    })
-  );
+  if (platforms.length === 0) {
+    return [];
+  }
 
-  return platformSummaries;
+  const ownerIds = [...new Set(platforms.map((p) => p.ownerUserId))];
+  const [accountTotals, activeAccountTotals, keyTotals, activeKeyTotals, owners, usageByPlatform] =
+    await Promise.all([
+      db.business.groupBy({
+        by: ['platformId'],
+        _count: { _all: true },
+      }),
+      db.business.groupBy({
+        by: ['platformId'],
+        where: { isActive: true },
+        _count: { _all: true },
+      }),
+      db.platformApiKey.groupBy({
+        by: ['platformId'],
+        _count: { _all: true },
+      }),
+      db.platformApiKey.groupBy({
+        by: ['platformId'],
+        where: { revokedAt: null },
+        _count: { _all: true },
+      }),
+      db.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, fullName: true, email: true, isActive: true },
+      }),
+      fetchPlatformUsageSince(addUtcDays(lagosDateOnly(), -29), db),
+    ]);
+
+  const totalAccountsMap = new Map(accountTotals.map((r) => [r.platformId, r._count._all]));
+  const activeAccountsMap = new Map(activeAccountTotals.map((r) => [r.platformId, r._count._all]));
+  const totalKeysMap = new Map(keyTotals.map((r) => [r.platformId, r._count._all]));
+  const activeKeysMap = new Map(activeKeyTotals.map((r) => [r.platformId, r._count._all]));
+  const ownerMap = new Map(owners.map((o) => [o.id, o]));
+  const usageMap = new Map(usageByPlatform.map((u) => [u.platformId, u]));
+
+  let summaries = platforms.map((p) => {
+    const owner = ownerMap.get(p.ownerUserId) ?? null;
+    const usage = usageMap.get(p.id);
+    const effectiveStatus = computeEffectivePlatformStatus(p);
+
+    return {
+      id: p.id,
+      name: p.name,
+      ownerUserId: p.ownerUserId,
+      owner: owner
+        ? {
+            id: owner.id,
+            fullName: owner.fullName ?? '',
+            email: owner.email ?? '',
+            isActive: owner.isActive,
+          }
+        : null,
+      approvalStatus: p.approvalStatus,
+      effectiveStatus,
+      isActive: p.isActive,
+      suspendedAt: p.suspendedAt?.toISOString() ?? null,
+      suspendedReason: p.suspendedReason,
+      flatFeeNgn: p.flatFeeNgn?.toString() ?? null,
+      subscriptionExpiresAt: p.subscriptionExpiresAt?.toISOString() ?? null,
+      totalAccounts: totalAccountsMap.get(p.id) ?? 0,
+      activeAccounts: activeAccountsMap.get(p.id) ?? 0,
+      totalKeys: totalKeysMap.get(p.id) ?? 0,
+      activeKeys: activeKeysMap.get(p.id) ?? 0,
+      requests30d: usage?.requests ?? 0,
+      errors30d: usage?.errors ?? 0,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+    };
+  });
+
+  if (params?.status) {
+    const normalizedFilter =
+      params.status.toUpperCase() === 'ACTIVE' ? 'LIVE' : params.status.toUpperCase();
+    summaries = summaries.filter((p) => p.effectiveStatus === normalizedFilter);
+  }
+
+  if (params?.search?.trim()) {
+    const q = params.search.trim().toLowerCase();
+    summaries = summaries.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.owner?.fullName?.toLowerCase().includes(q) ?? false) ||
+        (p.owner?.email?.toLowerCase().includes(q) ?? false)
+    );
+  }
+
+  return summaries;
+}
+
+/**
+ * Retrieves full partner platform detail including owner, API keys, merchant counts,
+ * and 30-day API traffic series.
+ */
+export async function getPlatformDetailAdmin(platformId: string, db: DbClient = prisma) {
+  const platform = await db.platform.findUnique({
+    where: { id: platformId },
+  });
+
+  if (!platform) {
+    return null;
+  }
+
+  const to = lagosDateOnly();
+  const from = addUtcDays(to, -29);
+
+  const [owner, keys, totalAccounts, activeAccounts, series] = await Promise.all([
+    db.user.findUnique({
+      where: { id: platform.ownerUserId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        isActive: true,
+        isVerified: true,
+        createdAt: true,
+      },
+    }),
+    listKeysForPlatform(platform.id, db),
+    db.business.count({ where: { platformId: platform.id } }),
+    db.business.count({ where: { platformId: platform.id, isActive: true } }),
+    fetchUsageSeries(platform.id, from, to, db),
+  ]);
+
+  const requests = series.reduce((sum, point) => sum + point.requests, 0);
+  const errors = series.reduce((sum, point) => sum + point.errors, 0);
+
+  return {
+    id: platform.id,
+    name: platform.name,
+    ownerUserId: platform.ownerUserId,
+    approvalStatus: platform.approvalStatus,
+    effectiveStatus: computeEffectivePlatformStatus(platform),
+    isActive: platform.isActive,
+    suspendedAt: platform.suspendedAt?.toISOString() ?? null,
+    suspendedReason: platform.suspendedReason,
+    flatFeeNgn: platform.flatFeeNgn?.toString() ?? null,
+    subscriptionExpiresAt: platform.subscriptionExpiresAt?.toISOString() ?? null,
+    totalAccounts,
+    activeAccounts,
+    totalKeys: keys.length,
+    activeKeys: keys.filter((k) => k.revokedAt === null).length,
+    createdAt: platform.createdAt.toISOString(),
+    updatedAt: platform.updatedAt.toISOString(),
+    owner: owner
+      ? {
+          id: owner.id,
+          email: owner.email ?? '',
+          fullName: owner.fullName ?? '',
+          isActive: owner.isActive,
+          isVerified: owner.isVerified,
+          createdAt: owner.createdAt.toISOString(),
+        }
+      : null,
+    keys: keys.map((k) => ({
+      id: k.id,
+      platformId: k.platformId,
+      label: k.label,
+      prefix: k.prefix,
+      environment: k.environment,
+      createdAt: k.createdAt.toISOString(),
+      lastUsedAt: k.lastUsedAt?.toISOString() ?? null,
+      revokedAt: k.revokedAt?.toISOString() ?? null,
+    })),
+    api: {
+      windowDays: 30,
+      requests,
+      errors,
+      errorRate: requests > 0 ? Math.round((errors / requests) * 10_000) / 100 : 0,
+      series,
+    },
+  };
 }
 
 /**
@@ -292,6 +467,7 @@ export async function listAccountsAdmin(
   params: {
     platformId?: string;
     search?: string;
+    isActive?: boolean;
     limit: number;
     cursor?: string;
   },
@@ -301,6 +477,10 @@ export async function listAccountsAdmin(
 
   if (params.platformId) {
     where['platformId'] = params.platformId;
+  }
+
+  if (params.isActive !== undefined) {
+    where['isActive'] = params.isActive;
   }
 
   if (params.search) {
@@ -437,8 +617,8 @@ export async function searchAuditLogsAdmin(
 ) {
   const where: Record<string, unknown> = {};
 
-  if (params.actor) where['actor'] = params.actor;
-  if (params.action) where['action'] = params.action;
+  if (params.actor) where['actor'] = { contains: params.actor, mode: 'insensitive' };
+  if (params.action) where['action'] = { contains: params.action, mode: 'insensitive' };
   if (params.businessId) where['businessId'] = params.businessId;
   if (params.platformId) where['platformId'] = params.platformId;
   if (params.since) where['createdAt'] = { gte: params.since };
@@ -455,11 +635,34 @@ export async function searchAuditLogsAdmin(
   const items = hasMore ? logs.slice(0, params.limit) : logs;
   const nextCursor = hasMore ? items[items.length - 1]?.id ?? null : null;
 
+  const platformIds = [...new Set(items.map((l) => l.platformId).filter(Boolean) as string[])];
+  const businessIds = [...new Set(items.map((l) => l.businessId).filter(Boolean) as string[])];
+
+  const [platforms, businesses] = await Promise.all([
+    platformIds.length > 0
+      ? db.platform.findMany({
+          where: { id: { in: platformIds } },
+          select: { id: true, name: true },
+        })
+      : [],
+    businessIds.length > 0
+      ? db.business.findMany({
+          where: { id: { in: businessIds } },
+          select: { id: true, businessName: true },
+        })
+      : [],
+  ]);
+
+  const platformNameMap = new Map(platforms.map((p) => [p.id, p.name]));
+  const businessNameMap = new Map(businesses.map((b) => [b.id, b.businessName]));
+
   return {
     items: items.map((l) => ({
       id: l.id,
       platformId: l.platformId,
+      platformName: l.platformId ? platformNameMap.get(l.platformId) ?? null : null,
       businessId: l.businessId,
+      businessName: l.businessId ? businessNameMap.get(l.businessId) ?? null : null,
       actor: l.actor,
       action: l.action,
       resourceType: l.resourceType,
@@ -482,6 +685,8 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
   const [
     totalPlatforms,
     activePlatforms,
+    pendingPlatforms,
+    suspendedPlatforms,
     totalAccounts,
     activeAccounts,
     totalSales,
@@ -491,6 +696,12 @@ export async function getUsageStatsAdmin(db: DbClient = prisma) {
   ] = await Promise.all([
     db.platform.count(),
     db.platform.count({ where: { isActive: true } }),
+    db.platform.count({ where: { isActive: true, suspendedAt: null, approvalStatus: 'PENDING' } }),
+    db.platform.count({
+      where: {
+        OR: [{ isActive: false }, { suspendedAt: { not: null } }, { approvalStatus: 'SUSPENDED' }],
+      },
+    }),
     db.business.count(),
     db.business.count({ where: { isActive: true } }),
     db.salesTransaction.count(),
@@ -520,6 +731,8 @@ const apiErrors = apiUsageByPlatform.reduce((sum, p) => sum + p.errors, 0);
     platforms: {
       total: totalPlatforms,
       active: activePlatforms,
+      pending: pendingPlatforms,
+      suspended: suspendedPlatforms,
     },
     accounts: {
       total: totalAccounts,

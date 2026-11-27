@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { findPlatformEntitlement } from '../db/entitlement.repo.js';
 import { AppError } from '../lib/errors.js';
+import { buildExpiryDetails, isPlatformExpired } from '../services/entitlement.service.js';
 
 export async function requirePlatformActive(
   req: Request,
@@ -24,6 +25,17 @@ export async function requirePlatformActive(
         403,
         'PLATFORM_SUSPENDED',
         platform?.suspendedReason || 'Platform access suspended'
+      )
+    );
+  }
+
+  if (isPlatformExpired(platform)) {
+    return next(
+      new AppError(
+        402,
+        'SUBSCRIPTION_EXPIRED',
+        'Platform subscription has expired',
+        buildExpiryDetails(platform.subscriptionExpiresAt!)
       )
     );
   }
